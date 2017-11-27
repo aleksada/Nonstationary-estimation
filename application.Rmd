@@ -1,0 +1,1790 @@
+---
+title: "application"
+author: "Yuxiao Li"
+output: pdf_document
+---
+
+#Application to real data
+
+##Read data and some exploratory analysis
+```{r application read data}
+library(ncdf4)
+library(maps)
+library(ggmap)
+library(mapdata)
+library(rgdal)
+library(fields)
+library(abind)
+library(RColorBrewer)
+library(convoSPAT)
+library(dplyr)
+library(colorspace)
+library(FNN)
+
+##Load GCM rainfall data
+setwd("~/Documents")
+files <- list.files('~/Documents/pr1', pattern="*.nc", full.names=TRUE)
+files
+
+file1 <- nc_open(files[1])
+pr <- ncvar_get(file1, "pr")
+lat <- ncvar_get(file1, "lat")
+lon <- ncvar_get(file1, "lon")
+
+
+for (i in 2:5) {
+    file <- nc_open(files[i])
+    pr.file <- ncvar_get(file, "pr")
+    nc_close(file)
+    pr <- abind(pr, pr.file, along=3)
+}
+
+##Extract summer data
+summer_pr_gcm <- array(0,c(30,13,150))
+for(j in 1:(5 * 30)) 
+    summer_pr_gcm[,,j] <- apply(pr[,,((j - 1) * 12 + 6):((j - 1)*12 + 8)],
+                                c(1,2),mean) * 86400
+
+##Compute summer mean
+summer_pr_gcm_mean <- array(0,c(30,13,5))
+for(j in 1:5) 
+    summer_pr_gcm_mean[,,j] <- apply(summer_pr_gcm[,,(((j - 1) * 30 + 1):((j - 1) * 30 + 30))],c(1,2),mean)
+
+
+##Extract summer 1971 data
+summer_pr_gcm_1971 <- array(0,c(30,13,5))
+summer_pr_gcm_1971[,,1] <- summer_pr_gcm[,,1]
+for (i in 1:4)
+    summer_pr_gcm_1971[,,i + 1] <- summer_pr_gcm[,,30 * i + 1]
+
+##Manipulated final summer 1971 data for analyzing
+summer_pr_gcm_1971_final <- sqrt(summer_pr_gcm_1971) - sqrt(summer_pr_gcm_mean)
+
+
+##Extract summer 1998 data
+summer_pr_gcm_1998 <- array(0,c(30,13,5))
+summer_pr_gcm_1998[,,1] <- summer_pr_gcm[,,28]
+for (i in 1:4)
+    summer_pr_gcm_1998[,,i + 1] <- summer_pr_gcm[,,30 * i + 28]
+
+##Manipulated final summer 1998 data for analyzing
+summer_pr_gcm_1998_final <- sqrt(summer_pr_gcm_1998) - sqrt(summer_pr_gcm_mean)
+
+##Extract winter data
+winter_pr_gcm <- array(0,c(30,13,150))
+for(j in 1:(5 * 30)) 
+    winter_pr_gcm[,,j] <- apply(pr[,,c((j - 1) * 12 + 1,(j - 1) * 12 + 2,
+                                   (j - 1) * 12 + 12)],c(1,2),mean) * 86400
+
+##Compute winter mean
+winter_pr_gcm_mean <- array(0,c(30,13,5))
+for(j in 1:5) 
+    winter_pr_gcm_mean[,,j] <- apply(winter_pr_gcm[,,(((j - 1) * 30 + 1):((j - 1) * 30 + 30))],c(1,2),mean)
+
+
+##Extract winter 1971 data
+winter_pr_gcm_1971 <- array(0,c(30,13,5))
+winter_pr_gcm_1971[,,1] <- winter_pr_gcm[,,1]
+for (i in 1:4)
+    winter_pr_gcm_1971[,,i + 1] <- winter_pr_gcm[,,30 * i + 1]
+
+##Manipulated final winter 1971 data for analyzing
+winter_pr_gcm_1971_final <- sqrt(winter_pr_gcm_1971) - sqrt(winter_pr_gcm_mean)
+
+
+##Extract winter 1998 data
+winter_pr_gcm_1998 <- array(0,c(30,13,5))
+winter_pr_gcm_1998[,,1] <- winter_pr_gcm[,,28]
+for (i in 1:4)
+    winter_pr_gcm_1998[,,i + 1] <- winter_pr_gcm[,,30 * i + 28]
+
+##Manipulated final winter 1998 data for analyzing
+winter_pr_gcm_1998_final <- sqrt(winter_pr_gcm_1998) - sqrt(winter_pr_gcm_mean)
+
+
+##Load RCM rainfall data 
+CRCM_summer <- read.csv("pr1/RCMSummer.csv",header = T,skip = 7)
+CRCM_winter <- read.csv("pr1/RCMWinter.csv",header = T,skip = 7)
+
+##Extract summer 1971 data
+rcm_summer_1971 <- filter(CRCM_summer,year == 1971)[c(2,1,7)]
+summer_mean_rcm <- summarise(group_by(CRCM_summer,lon,lat), mean(summer))
+summer_pr_rcm_1971 <- as.image(unlist(rcm_summer_1971$summer),
+                               x = rcm_summer_1971[,1:2],nx = 210, ny = 62)
+summer_pr_rcm_1971_final <- as.image(unlist(sqrt(rcm_summer_1971$summer) -
+                                                sqrt(summer_mean_rcm$`mean(summer)`)),
+                                     x = rcm_summer_1971[,1:2],nx = 210, ny = 62)
+
+rcm_winter_1971 <- filter(CRCM_winter ,year == 1971)[c(2,1,7)]
+winter_mean_rcm <- summarise(group_by(CRCM_winter,lon,lat), mean(winter))
+winter_pr_rcm_1971 <- as.image(unlist(rcm_winter_1971$winter),
+                               x = rcm_winter_1971[,1:2],nx = 198, ny = 58)
+winter_pr_rcm_1971_final <- as.image(unlist(sqrt(rcm_winter_1971$winter) -
+                                                sqrt(winter_mean_rcm$`mean(winter)`)),
+                                     x = rcm_winter_1971[,1:2],nx = 198, ny = 58)
+
+
+rcm_summer_1998 <- filter(CRCM_summer,year == 1998)[c(2,1,7)]
+summer_mean_rcm <- summarise(group_by(CRCM_summer,lon,lat), mean(summer))
+summer_pr_rcm_1998 <- as.image(unlist(rcm_summer_1998$summer),
+                               x = rcm_summer_1971[,1:2],nx = 210, ny = 62)
+summer_pr_rcm_1998_final <- as.image(unlist(sqrt(rcm_summer_1998$summer) -
+                                                sqrt(summer_mean_rcm$`mean(summer)`)),
+                                     x = rcm_summer_1998[,1:2],nx = 210, ny = 62)
+
+rcm_winter_1998 <- filter(CRCM_winter ,year == 1998)[c(2,1,7)]
+winter_mean_rcm <- summarise(group_by(CRCM_winter,lon,lat), mean(winter))
+winter_pr_rcm_1998 <- as.image(unlist(rcm_winter_1998$winter),
+                               x = rcm_winter_1998[,1:2],nx = 198, ny = 58)
+winter_pr_rcm_1998_final <- as.image(unlist(sqrt(rcm_winter_1998$winter) -
+                                                sqrt(winter_mean_rcm$`mean(winter)`)),
+                                     x = rcm_winter_1998[,1:2],nx = 198, ny = 58)
+
+```
+
+##Plot data based on original scale
+```{r application plot original data}
+color.pal <- c("#934D00" ,"#9D5A00" ,"#A86927" ,"#B47948" ,"#BF8B64" ,"#CC9F82", "#DBB8A3", "#EDDACF", "#D3DEEF" ,"#AAC0DF", "#8BABD4" ,"#6E99CA", "#518AC2", "#2C7CBB" ,"#0070B5" ,"#0065B1")
+pal <- color.pal
+par(mfrow = c(3,2),mar = c(3,3,2,1),mgp = c(2,1,0))
+
+z_range1 <- range(summer_pr_rcm_1971$z)
+image.plot(lon - 360,lat,summer_pr_gcm_1971[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range1 ,
+           main = '1971 summer (JJA) precipitation rate (mm/day)-CGCM3-run1')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add=T, col='black', fill=F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1971[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range1,
+           main='1971 summer (JJA) precipitation rate (mm/day)-CGCM3-run2')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1971[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range1, 
+           main='1971 summer (JJA) precipitation rate (mm/day)-CGCM3-run3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1971[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range1, 
+           main='1971 summer (JJA) precipitation rate (mm/day)-CGCM3-run4')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1971[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range1, 
+           main='1971 summer (JJA) precipitation rate (mm/day)-CGCM3-run5')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(summer_pr_rcm_1971,
+           col = pal,zlim = z_range1,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 summer (JJA) precipitation (mm/day)-CRCM3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+
+
+z_range2 <- range(winter_pr_rcm_1971$z)
+image.plot(lon - 360,lat,winter_pr_gcm_1971[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range2,
+           main = '1971 winter (JJA) precipitation rate (mm/day)-CGCM3-run1')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add=T, col='black', fill=F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1971[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range2,
+           main='1971 winter (JJA) precipitation rate (mm/day)-CGCM3-run2')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1971[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range2, 
+           main='1971 winter (JJA) precipitation rate (mm/day)-CGCM3-run3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1971[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range2, 
+           main='1971 winter (JJA) precipitation rate (mm/day)-CGCM3-run4')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1971[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range2, 
+           main='1971 winter (JJA) precipitation rate (mm/day)-CGCM3-run5')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(winter_pr_rcm_1971,
+           col = pal,zlim = z_range2,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 winter (JJA) precipitation (mm/day)-CRCM3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+
+z_range3 <- range(summer_pr_rcm_1998$z)
+image.plot(lon - 360,lat,summer_pr_gcm_1998[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range3 ,
+           main = '1998 summer (JJA) precipitation rate (mm/day)-CGCM3-run1')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add=T, col='black', fill=F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1998[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range3,
+           main='1998 summer (JJA) precipitation rate (mm/day)-CGCM3-run2')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1998[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range3, 
+           main='1998 summer (JJA) precipitation rate (mm/day)-CGCM3-run3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1998[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range3, 
+           main='1998 summer (JJA) precipitation rate (mm/day)-CGCM3-run4')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,summer_pr_gcm_1998[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range3, 
+           main='1998 summer (JJA) precipitation rate (mm/day)-CGCM3-run5')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(summer_pr_rcm_1998,
+           col = pal,zlim = z_range3,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 summer (JJA) precipitation (mm/day)-CRCM3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+
+
+z_range4 <- range(winter_pr_rcm_1998$z)
+image.plot(lon - 360,lat,winter_pr_gcm_1998[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range4 ,
+           main = '1998 winter (JJA) precipitation rate (mm/day)-CGCM3-run1')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add=T, col='black', fill=F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1998[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range4,
+           main='1998 winter (JJA) precipitation rate (mm/day)-CGCM3-run2')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col = 'black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1998[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range4, 
+           main='1998 winter (JJA) precipitation rate (mm/day)-CGCM3-run3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1998[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range4, 
+           main='1998 winter (JJA) precipitation rate (mm/day)-CGCM3-run4')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(lon-360,lat,winter_pr_gcm_1998[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range4, 
+           main='1998 winter (JJA) precipitation rate (mm/day)-CGCM3-run5')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+
+image.plot(winter_pr_rcm_1998,
+           col = pal,zlim = z_range4,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 winter (JJA) precipitation (mm/day)-CRCM3')
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col = 'black', fill = F)
+```
+
+##Add maps on the plot
+```{r add map}
+addmap <- function(){
+maps::map("worldHires", xlim = c(-160,-40), ylim = c(20,70), add = T, col='black', fill = F)
+maps::map("state", add = T, col='black', fill = F)
+text(-105,60,'Canada')
+text(-110,45,'USA')
+}
+```
+
+##Plot data based on transformed scale
+```{r application plot final data}
+color.pal <- c("#934D00" ,"#9D5A00" ,"#A86927" ,"#B47948" ,"#BF8B64" ,"#CC9F82", "#DBB8A3", "#EDDACF", "#D3DEEF" ,"#AAC0DF", "#8BABD4" ,"#6E99CA", "#518AC2", "#2C7CBB" ,"#0070B5" ,"#0065B1")
+pal <- color.pal
+par(mfrow = c(3,2),mar = c(2,2.5,1.5,1),mgp = c(1.2,.5,0))
+
+z_range5 <- range(summer_pr_gcm_1971_final)
+image.plot(lon - 360,lat,summer_pr_gcm_1971_final[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range5 ,
+           main = '1971 summer - CGCM3 - run1')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1971_final[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range5,
+           main='1971 summer - CGCM3 - run2')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1971_final[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range5, 
+           main='1971 summer - CGCM3 - run3')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1971_final[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range5, 
+           main='1971 summer - CGCM3 - run4')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1971_final[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range5, 
+           main='1971 summer - CGCM3 - run5')
+addmap()
+
+image.plot(summer_pr_rcm_1971_final,
+           col = pal,zlim = z_range5,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 summer - CRCM')
+addmap()
+
+
+z_range6 <- range(c(winter_pr_gcm_1971_final,winter_pr_rcm_1971_final$z))
+image.plot(lon - 360,lat,winter_pr_gcm_1971_final[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range6 ,
+           main = '1971 winter precipitation rate residuals-CGCM3-output1')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1971_final[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range6,
+           main='1971 winter precipitation rate residuals-CGCM3-output2')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1971_final[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range6, 
+           main='1971 winter precipitation rate residuals-CGCM3-output3')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1971_final[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range6, 
+           main='1971 winter precipitation rate residuals-CGCM3-output4')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1971_final[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range6, 
+           main='1971 winter precipitation rate residuals-CGCM3-output5')
+addmap()
+
+image.plot(winter_pr_rcm_1971_final,
+           col = pal,zlim = z_range6,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 winter precipitation rate residuals-CRCM')
+addmap()
+
+
+z_range7 <- range(c(summer_pr_gcm_1998_final,summer_pr_rcm_1998_final$z))
+image.plot(lon - 360,lat,summer_pr_gcm_1998_final[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range7 ,
+           main = '1998 summer precipitation rate residuals-CGCM3-output1')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1998_final[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range7,
+           main='1998 summer precipitation rate residuals-CGCM3-output2')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1998_final[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range7, 
+           main='1998 summer precipitation rate residuals-CGCM3-output3')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1998_final[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range7, 
+           main='1998 summer precipitation rate residuals-CGCM3-output4')
+addmap()
+
+image.plot(lon-360,lat,summer_pr_gcm_1998_final[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range7, 
+           main='1998 summer precipitation rate residuals-CGCM3-output5')
+addmap()
+
+image.plot(summer_pr_rcm_1998_final,
+           col = pal,zlim = z_range7,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 summer precipitation rate residuals-CRCM')
+addmap()
+
+
+z_range8 <- range(c(winter_pr_gcm_1998_final,winter_pr_rcm_1998_final$z))
+image.plot(lon - 360,lat,winter_pr_gcm_1998_final[,,1],
+           col = pal,nlevel = 64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range8 ,
+           main = '1998 winter precipitation rate residuals-CGCM3-output1')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1998_final[,,2],
+           col = pal,nlevel = 64, xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range8,
+           main='1998 winter precipitation rate residuals-CGCM3-output2')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1998_final[,,3],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range8, 
+           main='1998 winter precipitation rate residuals-CGCM3-output3')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1998_final[,,4],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range8, 
+           main='1998 winter precipitation rate residuals-CGCM3-output4')
+addmap()
+
+image.plot(lon-360,lat,winter_pr_gcm_1998_final[,,5],
+           col = pal,nlevel=64,xlab = 'Longitude',ylab = 'Latitude',
+           xlim = c(-144.5,-40.0),ylim = c(40.0, 70.5),zlim = z_range8, 
+           main='1998 winter precipitation rate residuals-CGCM3-output5')
+addmap()
+
+image.plot(winter_pr_rcm_1998_final,
+           col = pal,zlim = z_range8,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 winter precipitation rate residuals-CRCM')
+addmap()
+
+ranget <- c(min(z_range5,z_range6,z_range7,z_range8),max(z_range5,z_range6,z_range7,z_range8))
+
+par(mfrow = c(2,2),mar = c(2.5,2.5,1.8,1),mgp = c(1.2,.5,0))
+image.plot(summer_pr_rcm_1971_final,
+           col = pal,zlim = z_range5,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 summer - CRCM')
+addmap()
+
+image.plot(winter_pr_rcm_1971_final,
+           col = pal,zlim = z_range6,xlab = 'Longitude',ylab = 'Latitude',
+           main='1971 winter - CRCM')
+addmap()
+
+image.plot(summer_pr_rcm_1998_final,
+           col = pal,zlim = z_range7,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 summer - CRCM')
+addmap()
+
+image.plot(winter_pr_rcm_1998_final,
+           col = pal,zlim = z_range8,xlab = 'Longitude',ylab = 'Latitude',
+           main='1998 winter - CRCM')
+addmap()
+
+
+```
+
+##Function to generate S0 estimates
+```{r gen S0}
+theta2 <- function (nk, beta0) {
+    theta <- NULL
+    Nk <- sqrt(nk)
+    for(k in (1 : Nk)){
+        theta.col <- NULL
+        for(l in (1 : Nk)){  
+            theta.local <- matrix(0,nx/2,ny/2)
+            for(i in (1 : nx/2)){
+                for(j in (1 : ny/2)){
+                x1 <- i/nx/2
+                x2 <- j/ny/2
+                theta.local[i,j] <- beta0[l + (k - 1) * Nk] 
+                }
+            }
+            theta.col <- rbind(theta.col,theta.local)
+        }
+        theta <- cbind(theta,theta.col)
+    }
+    return(theta)
+}
+```
+
+##Estimate the 1971 summer data
+```{r application estimation 1971 summer}
+locations <- expand.grid((lon-lon[1])/(lon[30]-lon[1]), (lat-lat[1])/(lat[13]-lat[1]))
+locations <- as.matrix(locations)
+data<-matrix(0,(30*13),5)
+for(j in 1:5) 
+  data[,j] <- summer_pr_gcm_1971_final[,,j]
+N.mc <- 4
+fit.radius <- 0.3
+rslt <- NSconvo_fit(coords = locations,data = data,cov.model = 'matern',
+                    fit.radius = fit.radius,N.mc = N.mc)
+
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p_summer_1971 <- matrix(0,N.mc,6)
+for (i in 1:N.mc) p_summer_1971[i,] <- c(log(beta0_lam1[i]),log(beta0_lam2[i]),
+                             log(beta0_phi[i]/(pi/2-beta0_phi[i])),
+                             nu.est,sigma2.est,tau2.est)
+saveRDS(p_summer_1971,"p_real_summer_1971.Rds")
+#saveRDS(mc.locations,"mc.locations.Rds")
+
+data <- t(data)
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1 <- abs(locations[, 1] - mc.locations[k, 1])
+    d2 <- abs(locations[, 2] - mc.locations[k, 2])
+    temp.locs <- locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,] <- MLEs.local$par
+}
+
+LL.est_summer_1971 <- LL.est.circle
+saveRDS(LL.est_summer_1971,"LL.est_real_summer_1971.Rds")
+LL.est_summer_1971 <- readRDS("LL.est_real_summer_1971.Rds")
+p <- readRDS("p_real_summer_1971.Rds")
+n <- 210 * 62
+nx <- 210
+ny <- 62
+N.mc <- 4
+lam1.est_summer_1971 <- lam2.est_summer_1971 <- phi.est_summer_1971 <- matrix(0,nx,ny)
+lam1.est.ll_summer_1971 <- lam2.est.ll_summer_1971 <- phi.est.ll_summer_1971 <- matrix(0,nx,ny)
+weights <- array(0,c(nx,ny,N.mc))
+x.scale <- (summer_pr_rcm_1971_final$x + 360 - lon[1])/(lon[30] - lon[1])
+saveRDS(x.scale,'x_scale_summer_1971.Rds')
+y.scale <- (summer_pr_rcm_1971_final$y - lat[1])/(lat[13] - lat[1])
+for(i in (1 : nx)){
+    for(j in (1 : ny)){
+        x1 <- x.scale[i]
+        x2 <- y.scale[j]
+        for(k in 1:N.mc) {
+            weights[i,j,k] <- exp(-sum((c(x1,x2) - mc.locations[k,])^2)/2/h)
+        }
+        weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+        ##WS0 estimators
+        lam1.est_summer_1971[i,j] <- sum(weights[i,j,] * p_summer_1971[,1])
+        lam2.est_summer_1971[i,j] <- sum(weights[i,j,] * p_summer_1971[,2])
+        phi.est_summer_1971[i,j] <- sum(weights[i,j,] * p_summer_1971[,3])
+        ##NS1 estimators
+        lam1.est.ll_summer_1971[i,j] <- sum(weights[i,j,] * (p_summer_1971[,1] + 
+                                LL.est_summer_1971[,1] * (x1 - mc.locations[,1]) +
+                                LL.est_summer_1971[,2] * (x2 - mc.locations[,2])))
+        lam2.est.ll_summer_1971[i,j] <- sum(weights[i,j,] * (p_summer_1971[,2] + 
+                                LL.est_summer_1971[,3] * (x1 - mc.locations[,1]) + 
+                                LL.est_summer_1971[,4] * (x2 - mc.locations[,2])))
+        phi.est.ll_summer_1971[i,j] <- sum(weights[i,j,] * (p_summer_1971[,3] + 
+                                LL.est_summer_1971[,5] * (x1 - mc.locations[,1]) +
+                                LL.est_summer_1971[,6] * (x2 - mc.locations[,2])))
+    }
+}
+
+loc.expand <- expand.grid(x.scale,y.scale)
+loc.expand <- as.matrix(loc.expand)
+est <- data.frame(lon = loc.expand[,1],lat = loc.expand[,2],
+                  lam1.est.ll = c(lam1.est.ll_summer_1971),
+                  lam2.est.ll = c(lam2.est.ll_summer_1971),
+                  phi.est.ll=c(phi.est.ll_summer_1971))
+saveRDS(est,file = "application estimation_summer_1971.Rds")
+```
+
+##Estimate the 1971 winter data
+```{r application estimation 1971 winter}
+locations <- expand.grid((lon-lon[1])/(lon[30]-lon[1]), (lat-lat[1])/(lat[13]-lat[1]))
+locations <- as.matrix(locations)
+data<-matrix(0,(30*13),5)
+for(j in 1:5) 
+  data[,j] <- winter_pr_gcm_1971_final[,,j]
+N.mc <- 4
+fit.radius <- 0.3
+rslt <- NSconvo_fit(coords = locations,data = data,cov.model = 'matern',
+                    fit.radius = fit.radius,N.mc = N.mc)
+
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p_winter_1971 <- matrix(0,N.mc,6)
+for (i in 1:N.mc) p_winter_1971[i,] <- c(log(beta0_lam1[i]),log(beta0_lam2[i]),
+                             log(beta0_phi[i]/(pi/2-beta0_phi[i])),
+                             nu.est,sigma2.est,tau2.est)
+saveRDS(p_winter_1971,"p_real_winter_1971.Rds")
+#saveRDS(mc.locations,"mc.locations.Rds")
+
+data <- t(data)
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1 <- abs(locations[, 1] - mc.locations[k, 1])
+    d2 <- abs(locations[, 2] - mc.locations[k, 2])
+    temp.locs <- locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,] <- MLEs.local$par
+}
+
+LL.est_winter_1971 <- LL.est.circle
+saveRDS(LL.est_winter_1971,"LL.est_real_winter_1971.Rds")
+LL.est_winter_1971 <- readRDS("LL.est_real_winter_1971.Rds")
+#p <- readRDS("p_real_winter_1971.Rds")
+n <- 198 * 58
+nx <- 198
+ny <- 58
+N.mc <- 4
+lam1.est_winter_1971 <- lam2.est_winter_1971 <- phi.est_winter_1971 <- matrix(0,nx,ny)
+lam1.est.ll_winter_1971 <- lam2.est.ll_winter_1971 <- phi.est.ll_winter_1971 <- matrix(0,nx,ny)
+weights <- array(0,c(nx,ny,N.mc))
+x.scale <- (winter_pr_rcm_1971_final$x + 360 - lon[1])/(lon[30] - lon[1])
+saveRDS(x.scale,'x_scale_winter_1971.Rds')
+y.scale <- (winter_pr_rcm_1971_final$y - lat[1])/(lat[13] - lat[1])
+for(i in (1 : nx)){
+    for(j in (1 : ny)){
+        x1 <- x.scale[i]
+        x2 <- y.scale[j]
+        for(k in 1:N.mc) {
+            weights[i,j,k] <- exp(-sum((c(x1,x2) - mc.locations[k,])^2)/2/h)
+        }
+        weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+        ##WS0 estimators
+        lam1.est_winter_1971[i,j] <- sum(weights[i,j,] * p_winter_1971[,1])
+        lam2.est_winter_1971[i,j] <- sum(weights[i,j,] * p_winter_1971[,2])
+        phi.est_winter_1971[i,j] <- sum(weights[i,j,] * p_winter_1971[,3])
+        ##NS1 estimators
+        lam1.est.ll_winter_1971[i,j] <- sum(weights[i,j,] * (p_winter_1971[,1] + 
+                                LL.est_winter_1971[,1] * (x1 - mc.locations[,1]) +
+                                LL.est_winter_1971[,2] * (x2 - mc.locations[,2])))
+        lam2.est.ll_winter_1971[i,j] <- sum(weights[i,j,] * (p_winter_1971[,2] + 
+                                LL.est_winter_1971[,3] * (x1 - mc.locations[,1]) + 
+                                LL.est_winter_1971[,4] * (x2 - mc.locations[,2])))
+        phi.est.ll_winter_1971[i,j] <- sum(weights[i,j,] * (p_winter_1971[,3] + 
+                                LL.est_winter_1971[,5] * (x1 - mc.locations[,1]) +
+                                LL.est_winter_1971[,6] * (x2 - mc.locations[,2])))
+    }
+}
+
+loc.expand <- expand.grid(x.scale,y.scale)
+loc.expand <- as.matrix(loc.expand)
+est <- data.frame(lon = loc.expand[,1],lat = loc.expand[,2],
+                  lam1.est.ll = c(lam1.est.ll_winter_1971),
+                  lam2.est.ll = c(lam2.est.ll_winter_1971),
+                  phi.est.ll=c(phi.est.ll_winter_1971))
+saveRDS(est,file = "application estimation_winter_1971.Rds")
+```
+
+##Estimate the 1998 summer data
+```{r application estimation 1998 summer}
+locations <- expand.grid((lon-lon[1])/(lon[30]-lon[1]), (lat-lat[1])/(lat[13]-lat[1]))
+locations <- as.matrix(locations)
+data<-matrix(0,(30*13),5)
+for(j in 1:5) 
+  data[,j] <- summer_pr_gcm_1998_final[,,j]
+N.mc <- 4
+fit.radius <- 0.35
+rslt <- NSconvo_fit(coords = locations,data = data,cov.model = 'matern',
+                    fit.radius = fit.radius,N.mc = N.mc)
+
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p_summer_1998 <- matrix(0,N.mc,6)
+for (i in 1:N.mc) p_summer_1998[i,] <- c(log(beta0_lam1[i]),log(beta0_lam2[i]),
+                             log(beta0_phi[i]/(pi/2-beta0_phi[i])),
+                             nu.est,sigma2.est,tau2.est)
+saveRDS(p_summer_1998,"p_real_summer_1998.Rds")
+#saveRDS(mc.locations,"mc.locations.Rds")
+
+data <- t(data)
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1 <- abs(locations[, 1] - mc.locations[k, 1])
+    d2 <- abs(locations[, 2] - mc.locations[k, 2])
+    temp.locs <- locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,] <- MLEs.local$par
+}
+
+LL.est_summer_1998 <- LL.est.circle
+saveRDS(LL.est_summer_1998,"LL.est_real_summer_1998.Rds")
+LL.est_summer_1998 <- readRDS("LL.est_real_summer_1998.Rds")
+#p <- readRDS("p_real_summer_1998.Rds")
+n <- 210 * 62
+nx <- 210
+ny <- 62
+N.mc <- 4
+lam1.est_summer_1998 <- lam2.est_summer_1998 <- phi.est_summer_1998 <- matrix(0,nx,ny)
+lam1.est.ll_summer_1998 <- lam2.est.ll_summer_1998 <- phi.est.ll_summer_1998 <- matrix(0,nx,ny)
+weights <- array(0,c(nx,ny,N.mc))
+x.scale <- (summer_pr_rcm_1998_final$x + 360 - lon[1])/(lon[30] - lon[1])
+saveRDS(x.scale,'x_scale_summer_1998.Rds')
+y.scale <- (summer_pr_rcm_1998_final$y - lat[1])/(lat[13] - lat[1])
+for(i in (1 : nx)){
+    for(j in (1 : ny)){
+        x1 <- x.scale[i]
+        x2 <- y.scale[j]
+        for(k in 1:N.mc) {
+            weights[i,j,k] <- exp(-sum((c(x1,x2) - mc.locations[k,])^2)/2/h)
+        }
+        weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+        ##WS0 estimators
+        lam1.est_summer_1998[i,j] <- sum(weights[i,j,] * p_summer_1998[,1])
+        lam2.est_summer_1998[i,j] <- sum(weights[i,j,] * p_summer_1998[,2])
+        phi.est_summer_1998[i,j] <- sum(weights[i,j,] * p_summer_1998[,3])
+        ##NS1 estimators
+        lam1.est.ll_summer_1998[i,j] <- sum(weights[i,j,] * (p_summer_1998[,1] + 
+                                LL.est_summer_1998[,1] * (x1 - mc.locations[,1]) +
+                                LL.est_summer_1998[,2] * (x2 - mc.locations[,2])))
+        lam2.est.ll_summer_1998[i,j] <- sum(weights[i,j,] * (p_summer_1998[,2] + 
+                                LL.est_summer_1998[,3] * (x1 - mc.locations[,1]) + 
+                                LL.est_summer_1998[,4] * (x2 - mc.locations[,2])))
+        phi.est.ll_summer_1998[i,j] <- sum(weights[i,j,] * (p_summer_1998[,3] + 
+                                LL.est_summer_1998[,5] * (x1 - mc.locations[,1]) +
+                                LL.est_summer_1998[,6] * (x2 - mc.locations[,2])))
+    }
+}
+
+loc.expand <- expand.grid(x.scale,y.scale)
+loc.expand <- as.matrix(loc.expand)
+est <- data.frame(lon = loc.expand[,1],lat = loc.expand[,2],
+                  lam1.est.ll = c(lam1.est.ll_summer_1998),
+                  lam2.est.ll = c(lam2.est.ll_summer_1998),
+                  phi.est.ll=c(phi.est.ll_summer_1998))
+saveRDS(est,file = "application estimation_summer_1998.Rds")
+```
+
+##Estimate the 1998 winter data
+```{r application estimation 1998 winter}
+locations <- expand.grid((lon-lon[1])/(lon[30]-lon[1]), (lat-lat[1])/(lat[13]-lat[1]))
+locations <- as.matrix(locations)
+data<-matrix(0,(30*13),5)
+for(j in 1:5) 
+  data[,j] <- winter_pr_gcm_1998_final[,,j]
+N.mc <- 4
+fit.radius <- 0.3
+rslt <- NSconvo_fit(coords = locations,data = data,cov.model = 'matern',
+                    fit.radius = fit.radius,N.mc = N.mc)
+
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p_winter_1998 <- matrix(0,N.mc,6)
+for (i in 1:N.mc) p_winter_1998[i,] <- c(log(beta0_lam1[i]),log(beta0_lam2[i]),
+                             log(beta0_phi[i]/(pi/2-beta0_phi[i])),
+                             nu.est,sigma2.est,tau2.est)
+saveRDS(p_winter_1998,"p_real_winter_1998.Rds")
+#saveRDS(mc.locations,"mc.locations.Rds")
+
+data <- t(data)
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1 <- abs(locations[, 1] - mc.locations[k, 1])
+    d2 <- abs(locations[, 2] - mc.locations[k, 2])
+    temp.locs <- locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,] <- MLEs.local$par
+}
+
+LL.est_winter_1998 <- LL.est.circle
+saveRDS(LL.est_winter_1998,"LL.est_real_winter_1998.Rds")
+LL.est_winter_1998 <- readRDS("LL.est_real_winter_1998.Rds")
+#p <- readRDS("p_real_winter_1998.Rds")
+n <- 198 * 58
+nx <- 198
+ny <- 58
+N.mc <- 4
+lam1.est_winter_1998 <- lam2.est_winter_1998 <- phi.est_winter_1998 <- matrix(0,nx,ny)
+lam1.est.ll_winter_1998 <- lam2.est.ll_winter_1998 <- phi.est.ll_winter_1998 <- matrix(0,nx,ny)
+weights <- array(0,c(nx,ny,N.mc))
+x.scale <- (winter_pr_rcm_1998_final$x + 360 - lon[1])/(lon[30] - lon[1])
+saveRDS(x.scale,'x_scale_winter_1998.Rds')
+y.scale <- (winter_pr_rcm_1998_final$y - lat[1])/(lat[13] - lat[1])
+for(i in (1 : nx)){
+    for(j in (1 : ny)){
+        x1 <- x.scale[i]
+        x2 <- y.scale[j]
+        for(k in 1:N.mc) {
+            weights[i,j,k] <- exp(-sum((c(x1,x2) - mc.locations[k,])^2)/2/h)
+        }
+        weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+        ##WS0 estimators
+        lam1.est_winter_1998[i,j] <- sum(weights[i,j,] * p_winter_1998[,1])
+        lam2.est_winter_1998[i,j] <- sum(weights[i,j,] * p_winter_1998[,2])
+        phi.est_winter_1998[i,j] <- sum(weights[i,j,] * p_winter_1998[,3])
+        ##NS1 estimators
+        lam1.est.ll_winter_1998[i,j] <- sum(weights[i,j,] * (p_winter_1998[,1] + 
+                                LL.est_winter_1998[,1] * (x1 - mc.locations[,1]) +
+                                LL.est_winter_1998[,2] * (x2 - mc.locations[,2])))
+        lam2.est.ll_winter_1998[i,j] <- sum(weights[i,j,] * (p_winter_1998[,2] + 
+                                LL.est_winter_1998[,3] * (x1 - mc.locations[,1]) + 
+                                LL.est_winter_1998[,4] * (x2 - mc.locations[,2])))
+        phi.est.ll_winter_1998[i,j] <- sum(weights[i,j,] * (p_winter_1998[,3] + 
+                                LL.est_winter_1998[,5] * (x1 - mc.locations[,1]) +
+                                LL.est_winter_1998[,6] * (x2 - mc.locations[,2])))
+    }
+}
+
+loc.expand <- expand.grid(x.scale,y.scale)
+loc.expand <- as.matrix(loc.expand)
+est <- data.frame(lon = loc.expand[,1],lat = loc.expand[,2],
+                  lam1.est.ll = c(lam1.est.ll_winter_1998),
+                  lam2.est.ll = c(lam2.est.ll_winter_1998),
+                  phi.est.ll=c(phi.est.ll_winter_1998))
+saveRDS(est,file = "application estimation_winter_1998.Rds")
+```
+
+##Show the estimation results of parameters
+```{r plot estimation}
+
+par(mfrow = c(4,4), mar = c(2,2.2,1.5,1), mgp = c(1.1,0.4,0))
+
+range_lam1_summer_1971 <- range(exp(lam1.est.ll_summer_1971))
+range_lam2_summer_1971 <- range(exp(lam2.est.ll_summer_1971))
+range_lam1_winter_1971 <- range(exp(lam1.est.ll_winter_1971))
+range_lam2_winter_1971 <- range(exp(lam2.est.ll_winter_1971))
+range_lam1_summer_1998 <- range(exp(lam1.est.ll_summer_1998))
+range_lam2_summer_1998 <- range(exp(lam2.est.ll_summer_1998))
+range_lam1_winter_1998 <- range(exp(lam1.est.ll_winter_1998))
+range_lam2_winter_1998 <- range(exp(lam2.est.ll_winter_1998))
+
+range_lam1 <- c(min(c(range_lam1_summer_1971,range_lam1_winter_1971,range_lam1_summer_1998,range_lam1_winter_1998)),max(c(range_lam1_summer_1971,range_lam1_winter_1971,range_lam1_summer_1998,range_lam1_winter_1998)))
+
+range_lam2 <- c(min(c(range_lam2_summer_1971,range_lam2_winter_1971,range_lam2_summer_1998,range_lam2_winter_1998)),max(c(range_lam2_summer_1971,range_lam2_winter_1971,range_lam2_summer_1998,range_lam2_winter_1998)))
+
+
+
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           exp(lam1.est_summer_1971), zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(main = list(expression(paste(lambda[1],'+WS0')),cex = 2,font = 5),
+      ylab = list("1971 Summer", cex = 1.5, font = 3))
+addmap()
+
+
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           exp(lam1.est.ll_summer_1971),zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(main = list(expression(paste(lambda[1],'+NS1')),cex = 2,font = 5))
+addmap()
+
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           exp(lam2.est_summer_1971),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(main = list(expression(paste(lambda[2],'+WS0')),cex = 2,font = 5))
+addmap()
+
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           exp(lam2.est.ll_summer_1971),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(main = list(expression(paste(lambda[2],'+NS1')),cex = 2,font = 5))
+addmap()
+
+
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           exp(lam1.est_winter_1971), zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(ylab = list("1971 Winter", cex = 1.5, font = 3))
+addmap()
+
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           exp(lam1.est.ll_winter_1971),zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           exp(lam2.est_winter_1971),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           exp(lam2.est.ll_winter_1971),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           exp(lam1.est_summer_1998), zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(ylab = list("1998 Summer", cex = 1.5, font = 3))
+addmap()
+
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           exp(lam1.est.ll_summer_1998),zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           exp(lam2.est_summer_1998),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           exp(lam2.est.ll_summer_1998),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           exp(lam1.est_winter_1998), zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+title(ylab = list("1998 Winter", cex = 1.5, font = 3))
+addmap()
+
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           exp(lam1.est.ll_winter_1998),zlim = range_lam1,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           exp(lam2.est_winter_1998),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           exp(lam2.est.ll_winter_1998),zlim = range_lam2,
+           ylab = '',xlab = '',legend.width = .7, 
+           legend.mar = 3.5,legend.cex = .5,horizontal = T)
+addmap()
+
+
+# image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+#            exp(theta2(4,p_summer_1971[,1])),zlim = range_lam1_summer_1971,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(main = list(expression(lambda[1]),cex = 2,font = 5),
+#       xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("S0 estimates", cex = 1.5, font = 3))
+# addmap()
+
+# image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+#            exp(theta2(4,p_summer_1971[,2])),zlim =range_lam2_summer_1971,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(main = list(expression(lambda[2]),cex = 2,font = 5),
+#       xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("Latitude", cex = 1, font = 3))
+# addmap()
+
+
+# image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+#            exp(theta2(4,p_winter_1971[,1])),zlim = range_lam1_winter_1971,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(main = list(expression(lambda[1]),cex = 2,font = 5),
+#       xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("S0 estimates", cex = 1.5, font = 3))
+# addmap()
+# 
+# image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+#            exp(theta2(4,p_winter_1971[,2])),zlim =range_lam2_winter_1971,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(main = list(expression(lambda[2]),cex = 2,font = 5),
+#       xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("Latitude", cex = 1, font = 3))
+# addmap()
+
+# image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+#            exp(theta2(4,p_summer_1998[,1])),zlim = range_lam1_summer_1998,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("1998 Summer", cex = 1.5, font = 3))
+# addmap()
+# 
+# image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+#            exp(theta2(4,p_summer_1998[,2])),zlim =range_lam2_summer_1998,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(main = list(expression(lambda[2]),cex = 2,font = 5),
+#       xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("Latitude", cex = 1, font = 3))
+# addmap()
+
+# image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+#            exp(theta2(4,p_winter_1998[,1])),zlim = range_lam1_winter_1998,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("1998 Winter", cex = 1.5, font = 3))
+# addmap()
+# 
+# image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+#            exp(theta2(4,p_winter_1998[,2])),zlim =range_lam2_winter_1998,
+#            ylab = '',xlab = '',legend.width = .7,
+#            legend.mar = 3.5,legend.cex = .5,horizontal = T)
+# title(xlab = list("Longitude", cex = 1, font = 3),
+#       ylab = list("Latitude", cex = 1, font = 3))
+# addmap()
+```
+
+##Estimates the degree of nonstationarity
+```{r degree of nonstationarity}
+Deg_summer_1971_1 <- apply(abs(LL.est_summer_1971[,1:2]),1,mean)
+Deg_summer_1971_2 <- apply(abs(LL.est_summer_1971[,3:4]),1,mean)
+Deg_winter_1971_1 <- apply(abs(LL.est_winter_1971[,1:2]),1,mean)
+Deg_winter_1971_2 <- apply(abs(LL.est_winter_1971[,3:4]),1,mean)
+Deg_summer_1998_1 <- apply(abs(LL.est_summer_1998[,1:2]),1,mean)
+Deg_summer_1998_2 <- apply(abs(LL.est_summer_1998[,3:4]),1,mean)
+Deg_winter_1998_1 <- apply(abs(LL.est_winter_1998[,1:2]),1,mean)
+Deg_winter_1998_2 <- apply(abs(LL.est_winter_1998[,3:4]),1,mean)
+
+```
+
+##Function for Sequentially conditional simulation for summer
+```{r func sims summer}
+par_sims_summer <- function(num, x.scale, est, p){
+    library(dplyr)
+    emulation <- function(n,locations,log.lam1,log.lam2, logit.phi, sigma2, tau2, nu){ 
+        kernel.local <- array(0, dim = c(2, 2, n))
+        for(i in 1 : n){
+            lam1 <- exp(log.lam1[i])
+            lam2 <- exp(log.lam2[i])
+            phi <- (pi/2) * exp(logit.phi[i])/(1 + exp(logit.phi[i]))
+            Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+            Dmat <- diag(c(lam1, lam2))
+            Sigma <- Pmat %*% Dmat %*% t(Pmat)
+            kernel.local[, , i] <- Sigma
+        }
+        
+        
+        ##Calculate Matern form Nonstationary Covariance function 
+        Sigma.mat <- matrix(0,n,n)
+        Q.mat <- matrix(0,n,n)
+        Inv_ij <- matrix(0,2,2)
+        for (i in 1:n) {
+            Sigma.mat[i, i] <- 1
+            Q.mat[i, i] <- 0
+            Kernel_i <- kernel.local[, , i]
+            det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+            if (i < n) {
+                for (j in (i + 1):n) {
+                    Kernel_j <- kernel.local[, , j]
+                    det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                    Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                    Inv_ij[1,1] <- Kernel_ij[2,2] 
+                    Inv_ij[2,2] <- Kernel_ij[1,1] 
+                    Inv_ij[2,1] <- - Kernel_ij[2,1] 
+                    Inv_ij[1,2] <- - Kernel_ij[1,2] 
+                    det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - 
+                              Kernel_ij[1,2] * Kernel_ij[2,1]
+                    x <- locations[i, ] - locations[j, ]
+                    Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                    Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                    Sigma.mat[j, i] <- Sigma.mat[i, j]
+                    Q.mat[j, i] <- Q.mat[i, j]
+                }
+            }
+        }
+        cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                                 cov.pars = c(sigma2, 1), kappa = nu)
+        NS.cov <- Sigma.mat * cov + diag(rep(tau2,n))
+        m <- 1
+        mean.vec <- rep(0,n)
+        sim.data <- LaplacesDemon::rmvnc(m, mean.vec, NS.cov)
+        simdata <- list(locations = locations, kernel.local = kernel.local, 
+                        NS.cov = NS.cov, sim.data = sim.data)
+    }
+    lon_cutoff <- quantile(x.scale,(1:10)/10)
+
+    data_sub1 <- filter(est,lon <= lon_cutoff[1])
+    ns <- dim(data_sub1)[1]
+    ns2 <- dim(filter(est,lon <= lon_cutoff[2] & lon > lon_cutoff[1] - .02))[1]
+    data_sub <- array(0,c(ns2,5,10))
+    for (i in 2:7)
+        data_sub[,,i] <- as.matrix(filter(est,lon <= lon_cutoff[i] & 
+                                          lon > lon_cutoff[i-1] - .02))
+
+    for (i in 8:10)
+        data_sub[,,i] <- as.matrix(filter(est,lon <= lon_cutoff[i] & 
+                                          lon > lon_cutoff[i-1] - .018))
+
+    z_sub1 <- emulation(n = dim(data_sub1)[1], locations = as.matrix(data_sub1[,1:2]),
+                        log.lam1 = data_sub1[,3],log.lam2 = data_sub1[,4], 
+                        logit.phi = data_sub1[,5], 
+                        sigma2 = p[1,5], tau2 = p[1,6], nu = p[1,4])
+    ind1 <- which(z_sub1$locations[,1] > lon_cutoff[1] - .02)
+    z.save <- z_sub1$sim.data[1,][ind1]
+    m = 1
+    z <- matrix(0,10,ns)
+    z[1,] <- z_sub1$sim.data[1,]
+    for (i in 2:7){
+        z_sub <- emulation(n = dim(data_sub)[1], locations = data_sub[,1:2,i],
+                           log.lam1 = data_sub[,3,i],log.lam2 = data_sub[,4,i], 
+                           logit.phi = data_sub[,5,i], 
+                           sigma2 = p[1,5], tau2=p[1,6], nu = p[1,4])
+    
+        ind <- which(z_sub$locations[,1] < lon_cutoff[i-1])
+        cov_mat11 <- z_sub$NS.cov[ind,ind]
+        cov_mat12 <- z_sub$NS.cov[ind,-ind]
+        cov_mat22 <- z_sub$NS.cov[-ind,-ind]
+        cond_mean <- t(cov_mat12) %*% solve(cov_mat11) %*% z.save
+        cond_cov <- cov_mat22 - t(cov_mat12) %*% solve(cov_mat11) %*% cov_mat12
+        z[i,] <- LaplacesDemon::rmvnc(1, c(cond_mean), cond_cov)
+        ind2 <- which(z_sub$locations[-ind,1] > 
+                          ifelse(i==7,lon_cutoff[i] - .018,lon_cutoff[i] - .02))
+        z.save<-z[i,ind2]
+    }
+
+    for (i in 8:10){
+        z_sub <-emulation(n = dim(data_sub)[1], locations = data_sub[,1:2,i],
+                          log.lam1 = data_sub[,3,i],log.lam2 = data_sub[,4,i], 
+                          logit.phi = data_sub[,5,i], 
+                          sigma2 = p[1,5], tau2 = p[1,6], nu = p[1,4])
+    
+        ind <- which(z_sub$locations[,1] < lon_cutoff[i-1])
+        cov_mat11 <- z_sub$NS.cov[ind,ind]
+        cov_mat12 <- z_sub$NS.cov[ind,-ind]
+        cov_mat22 <- z_sub$NS.cov[-ind,-ind]
+        cond_mean <- t(cov_mat12) %*% solve(cov_mat11) %*% z.save
+        cond_cov <- cov_mat22 - t(cov_mat12) %*% solve(cov_mat11) %*% cov_mat12
+        z[i,] <- LaplacesDemon::rmvnc(1, c(cond_mean), cond_cov)
+        ind2 <- which(z_sub$locations[-ind,1] > lon_cutoff[i] - .018)
+        z.save <- z[i,ind2]
+    }
+    z.combine <- z[1,]
+    loc.combine <- cbind(data_sub1$lon,data_sub1$lat)
+    for (i in 1:9){
+        z.combine <- c(z.combine,z[i+1,])
+        loc.combine<-rbind(loc.combine,
+                          as.matrix(filter(est,lon <= lon_cutoff[i+1] & 
+                                               lon > lon_cutoff[i])[,1:2]))
+    }
+    return(list(z.combine,loc.combine))
+}
+
+```
+
+##Emulate 1971 and 1998 summer precipitation
+```{r application simulation summer}
+library(parallel)
+no_cores <- detectCores()-2
+cl <- makeCluster(no_cores)
+x.scale <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/x_scale_summer_1971.Rds')
+est <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/application estimation_summer_1971.Rds')
+p <- readRDS("~/Dropbox/My Research/Nonstationary paper/code/p_real_summer_1971.Rds")
+sims_rslt_summer_1971 <- parLapply(cl, 1:6,par_sims_summer,x.scale = x.scale,est = est, p = p)
+
+saveRDS(sims_rslt_summer_1971,"condi_simulation_summer_1971.Rds")
+sims_rslt_summer_1971 <- readRDS("condi_simulation_summer_1971.Rds")
+z.combine_summer_1971 <- matrix(0,6,210*62) 
+for (i in 1:6){
+    zzz <- sims_rslt_summer_1971[[i]]
+    names(zzz) <- c('z','loc')
+    z.combine_summer_1971[i,] <- zzz$z
+    if(i == 1) loc.combine_summer_1971 <- zzz$loc
+}
+
+x.scale <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/x_scale_summer_1998.Rds')
+est <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/application estimation_summer_1998.Rds')
+p <- readRDS("~/Dropbox/My Research/Nonstationary paper/code/p_real_summer_1998.Rds")
+sims_rslt_summer_1998 <- parLapply(cl, 1:6,par_sims_summer,x.scale = x.scale,est = est, p = p)
+
+saveRDS(sims_rslt_summer_1998,"condi_simulation_summer_1998.Rds")
+sims_rslt_summer_1998 <- readRDS("condi_simulation_summer_1998.Rds")
+z.combine_summer_1998 <- matrix(0,6,210*62) 
+for (i in 1:6){
+    zzz <- sims_rslt_summer_1998[[i]]
+    names(zzz) <- c('z','loc')
+    z.combine_summer_1998[i,] <- zzz$z
+    if(i == 1) loc.combine_summer_1998 <- zzz$loc
+}
+
+```
+
+##Function for Sequentially conditional simulation for winter
+```{r func sims winter}
+par_sims_winter <- function(num, x.scale, est, p){
+    library(dplyr)
+    emulation <- function(n,locations,log.lam1,log.lam2, logit.phi, sigma2, tau2, nu){ 
+        kernel.local <- array(0, dim = c(2, 2, n))
+        for(i in 1 : n){
+            lam1 <- exp(log.lam1[i])
+            lam2 <- exp(log.lam2[i])
+            phi <- (pi/2) * exp(logit.phi[i])/(1 + exp(logit.phi[i]))
+            Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+            Dmat <- diag(c(lam1, lam2))
+            Sigma <- Pmat %*% Dmat %*% t(Pmat)
+            kernel.local[, , i] <- Sigma
+        }
+        
+        
+        ##Calculate Matern form Nonstationary Covariance function 
+        Sigma.mat <- matrix(0,n,n)
+        Q.mat <- matrix(0,n,n)
+        Inv_ij <- matrix(0,2,2)
+        for (i in 1:n) {
+            Sigma.mat[i, i] <- 1
+            Q.mat[i, i] <- 0
+            Kernel_i <- kernel.local[, , i]
+            det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+            if (i < n) {
+                for (j in (i + 1):n) {
+                    Kernel_j <- kernel.local[, , j]
+                    det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                    Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                    Inv_ij[1,1] <- Kernel_ij[2,2] 
+                    Inv_ij[2,2] <- Kernel_ij[1,1] 
+                    Inv_ij[2,1] <- - Kernel_ij[2,1] 
+                    Inv_ij[1,2] <- - Kernel_ij[1,2] 
+                    det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - 
+                              Kernel_ij[1,2] * Kernel_ij[2,1]
+                    x <- locations[i, ] - locations[j, ]
+                    Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                    Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                    Sigma.mat[j, i] <- Sigma.mat[i, j]
+                    Q.mat[j, i] <- Q.mat[i, j]
+                }
+            }
+        }
+        cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                                 cov.pars = c(sigma2, 1), kappa = nu)
+        NS.cov <- Sigma.mat * cov + diag(rep(tau2,n))
+        m <- 1
+        mean.vec <- rep(0,n)
+        sim.data <- LaplacesDemon::rmvnc(m, mean.vec, NS.cov)
+        simdata <- list(locations = locations, kernel.local = kernel.local, 
+                        NS.cov = NS.cov, sim.data = sim.data)
+    }
+    lon_cutoff <- quantile(x.scale,(1:11)/11)
+
+    data_sub1 <- filter(est,lon <= lon_cutoff[1])
+    ns <- dim(data_sub1)[1]
+    ns2 <- dim(filter(est,lon <= lon_cutoff[2] & lon > lon_cutoff[1] - .02))[1]
+    data_sub <- array(0,c(ns2,5,11))
+    for (i in 2:7)
+        data_sub[,,i] <- as.matrix(filter(est,lon <= lon_cutoff[i] & 
+                                          lon > lon_cutoff[i-1] - .02))
+
+    for (i in 8:11)
+        data_sub[,,i] <- as.matrix(filter(est,lon <= lon_cutoff[i] & 
+                                          lon > lon_cutoff[i-1] - .018))
+
+    z_sub1 <- emulation(n = dim(data_sub1)[1], locations = as.matrix(data_sub1[,1:2]),
+                        log.lam1 = data_sub1[,3],log.lam2 = data_sub1[,4], 
+                        logit.phi = data_sub1[,5], 
+                        sigma2 = p[1,5], tau2 = p[1,6], nu = p[1,4])
+    ind1 <- which(z_sub1$locations[,1] > lon_cutoff[1] - .02)
+    z.save <- z_sub1$sim.data[1,][ind1]
+    m = 1
+    z <- matrix(0,11,ns)
+    z[1,] <- z_sub1$sim.data[1,]
+    for (i in 2:7){
+        z_sub <- emulation(n = dim(data_sub)[1], locations = data_sub[,1:2,i],
+                           log.lam1 = data_sub[,3,i],log.lam2 = data_sub[,4,i], 
+                           logit.phi = data_sub[,5,i], 
+                           sigma2 = p[1,5], tau2=p[1,6], nu = p[1,4])
+    
+        ind <- which(z_sub$locations[,1] < lon_cutoff[i-1])
+        cov_mat11 <- z_sub$NS.cov[ind,ind]
+        cov_mat12 <- z_sub$NS.cov[ind,-ind]
+        cov_mat22 <- z_sub$NS.cov[-ind,-ind]
+        cond_mean <- t(cov_mat12) %*% solve(cov_mat11) %*% z.save
+        cond_cov <- cov_mat22 - t(cov_mat12) %*% solve(cov_mat11) %*% cov_mat12
+        z[i,] <- LaplacesDemon::rmvnc(1, c(cond_mean), cond_cov)
+        ind2 <- which(z_sub$locations[-ind,1] > 
+                          ifelse(i==7,lon_cutoff[i] - .018,lon_cutoff[i] - .02))
+        z.save<-z[i,ind2]
+    }
+
+    for (i in 8:11){
+        z_sub <-emulation(n = dim(data_sub)[1], locations = data_sub[,1:2,i],
+                          log.lam1 = data_sub[,3,i],log.lam2 = data_sub[,4,i], 
+                          logit.phi = data_sub[,5,i], 
+                          sigma2 = p[1,5], tau2 = p[1,6], nu = p[1,4])
+    
+        ind <- which(z_sub$locations[,1] < lon_cutoff[i-1])
+        cov_mat11 <- z_sub$NS.cov[ind,ind]
+        cov_mat12 <- z_sub$NS.cov[ind,-ind]
+        cov_mat22 <- z_sub$NS.cov[-ind,-ind]
+        cond_mean <- t(cov_mat12) %*% solve(cov_mat11) %*% z.save
+        cond_cov <- cov_mat22 - t(cov_mat12) %*% solve(cov_mat11) %*% cov_mat12
+        z[i,] <- LaplacesDemon::rmvnc(1, c(cond_mean), cond_cov)
+        ind2 <- which(z_sub$locations[-ind,1] > lon_cutoff[i] - .018)
+        z.save <- z[i,ind2]
+    }
+    z.combine <- z[1,]
+    loc.combine <- cbind(data_sub1$lon,data_sub1$lat)
+    for (i in 1:10){
+        z.combine <- c(z.combine,z[i+1,])
+        loc.combine<-rbind(loc.combine,
+                          as.matrix(filter(est,lon <= lon_cutoff[i+1] & 
+                                               lon > lon_cutoff[i])[,1:2]))
+    }
+    return(list(z.combine,loc.combine))
+}
+
+```
+
+##Emulate 1971 and 1998 winter precipitation
+```{r application simulation winter}
+x.scale <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/x_scale_winter_1971.Rds')
+est <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/application estimation_winter_1971.Rds')
+p <- readRDS("~/Dropbox/My Research/Nonstationary paper/code/p_real_winter_1971.Rds")
+cl <- makeCluster(no_cores)
+sims_rslt_winter_1971 <- parLapply(cl, 1:6, par_sims_winter, x.scale = x.scale,est = est, p = p)
+
+saveRDS(sims_rslt_winter_1971,"condi_simulation_winter_1971.Rds")
+sims_rslt_winter_1971 <- readRDS("condi_simulation_winter_1971.Rds")
+z.combine_winter_1971 <- matrix(0,6,198*58) 
+for (i in 1:6){
+    zzz <- sims_rslt_winter_1971[[i]]
+    names(zzz) <- c('z','loc')
+    z.combine_winter_1971[i,] <- zzz$z
+    if(i == 1) loc.combine_winter_1971 <- zzz$loc
+}
+
+x.scale <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/x_scale_winter_1998.Rds')
+est <- readRDS('~/Dropbox/My Research/Nonstationary paper/code/application estimation_winter_1998.Rds')
+p <- readRDS("~/Dropbox/My Research/Nonstationary paper/code/p_real_winter_1998.Rds")
+sims_rslt_winter_1998 <- parLapply(cl, 1:6,par_sims_winter,x.scale = x.scale,est = est, p = p)
+
+saveRDS(sims_rslt_winter_1998,"condi_simulation_winter_1998.Rds")
+sims_rslt_winter_1998 <- readRDS("condi_simulation_winter_1998.Rds")
+
+z.combine_winter_1998 <- matrix(0,6,198*58) 
+for (i in 1:6){
+    zzz <- sims_rslt_winter_1998[[i]]
+    names(zzz) <- c('z','loc')
+    z.combine_winter_1998[i,] <- zzz$z
+    if(i == 1) loc.combine_winter_1998 <- zzz$loc
+}
+```
+
+##Show the results of our emulations
+```{r plot simulation}
+pal <- color.pal
+par(mfrow = c(3,2),mar = c(2,2.5,1.5,1),mgp = c(1.2,.5,0))
+
+out.cond1 <- as.image(z.combine_summer_1971[1,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond1$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation1')
+addmap()
+
+
+
+out.cond2 <- as.image(z.combine_summer_1971[2,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond2$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation2')
+addmap()
+
+out.cond3 <- as.image(z.combine_summer_1971[3,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond3$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation3')
+addmap()
+
+
+out.cond4 <- as.image(z.combine_summer_1971[4,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond4$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation4')
+addmap()
+
+out.cond5 <- as.image(z.combine_summer_1971[5,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond5$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation4')
+addmap()
+out.cond6 <- as.image(z.combine_summer_1971[6,],loc.combine_summer_1971,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1971_final$x,summer_pr_rcm_1971_final$y,
+           out.cond6$z,zlim = z_range5,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 summer emulation4')
+addmap()
+
+par(mfrow = c(3,2),mar = c(2,2.5,1.5,1),mgp = c(1.2,.5,0))
+
+
+out.cond1 <- as.image(z.combine_winter_1971[1,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond1$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+
+
+out.cond2 <- as.image(z.combine_winter_1971[2,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond2$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+out.cond3 <- as.image(z.combine_winter_1971[3,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond3$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+
+out.cond4 <- as.image(z.combine_winter_1971[4,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond4$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+out.cond5 <- as.image(z.combine_winter_1971[5,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond5$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+out.cond6 <- as.image(z.combine_winter_1971[6,],loc.combine_winter_1971,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1971_final$x,winter_pr_rcm_1971_final$y,
+           out.cond6$z,zlim = z_range6,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1971 winter precipitation downscaling output1')
+addmap()
+
+
+par(mfrow=c(3,2), mar = c(3,3,2,2), mgp = c(1.7,1,0))
+out.cond1 <- as.image(z.combine_summer_1998[1,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond1$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output1')
+addmap()
+
+
+
+out.cond2 <- as.image(z.combine_summer_1998[2,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond2$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output2')
+addmap()
+
+out.cond3 <- as.image(z.combine_summer_1998[3,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond3$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output1')
+addmap()
+
+
+out.cond4 <- as.image(z.combine_summer_1998[4,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond4$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output2')
+addmap()
+
+out.cond5 <- as.image(z.combine_summer_1998[5,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond5$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output2')
+addmap()
+
+out.cond6 <- as.image(z.combine_summer_1998[6,],loc.combine_summer_1998,nx = 210,ny = 62)
+image.plot(summer_pr_rcm_1998_final$x,summer_pr_rcm_1998_final$y,
+           out.cond6$z,zlim = z_range7,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 summer precipitation downscaling output2')
+addmap()
+
+par(mfrow = c(3,2),mar = c(2,2.5,1.5,1),mgp = c(1.2,.5,0))
+
+out.cond1 <- as.image(z.combine_winter_1998[1,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond1$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation1')
+addmap()
+
+
+
+out.cond2 <- as.image(z.combine_winter_1998[2,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond2$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation2')
+addmap()
+
+out.cond3 <- as.image(z.combine_winter_1998[3,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond3$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation3')
+addmap()
+
+out.cond4 <- as.image(z.combine_winter_1998[4,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond4$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation4')
+addmap()
+
+out.cond5 <- as.image(z.combine_winter_1998[5,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond5$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation5')
+addmap()
+out.cond6 <- as.image(z.combine_winter_1998[6,],loc.combine_winter_1998,nx = 198,ny = 58)
+image.plot(winter_pr_rcm_1998_final$x,winter_pr_rcm_1998_final$y,
+           out.cond6$z,zlim = z_range8,col = pal,
+           xlab = 'Longitude',ylab = 'Latitude',
+           main = '1998 winter emulation6')
+addmap()
+```
+
+##Show variograms
+```{r variogram}
+library(geoR)
+winter_pr_rcm_1998_vario <- data.frame(x = rcm_winter_1998$lon,y = rcm_winter_1998$lat, z = (sqrt(rcm_winter_1998$winter)-sqrt(winter_mean_rcm$`mean(winter)`)))
+
+z_local1 <- filter(winter_pr_rcm_1998_vario,x < -130, y < 43)
+inde1 <- which((loc.combine_winter_1998[,1] * (lon[30] - lon[1]) + lon[1] - 360) < -130 &
+                   (loc.combine_winter_1998[,2] * (lat[13] - lat[1]) + lat[1]) < 43)
+
+z_local2 <- filter(winter_pr_rcm_1998_vario,x < -130, y > 62)
+inde2 <- which((loc.combine_winter_1998[,1] * (lon[30] - lon[1]) + lon[1] - 360) < -130 &
+                   (loc.combine_winter_1998[,2] * (lat[13] - lat[1]) + lat[1]) > 62)
+
+
+z_local3 <- filter(winter_pr_rcm_1998_vario,x > -53, y < 43)
+inde3 <- which((loc.combine_winter_1998[,1] * (lon[30] - lon[1]) + lon[1] - 360) > -53 &
+                   (loc.combine_winter_1998[,2] * (lat[13] - lat[1]) + lat[1]) < 43)
+
+z_local4 <- filter(winter_pr_rcm_1998_vario,x > -53, y > 62)
+inde4 <- which((loc.combine_winter_1998[,1] * (lon[30] - lon[1]) + lon[1] - 360) > -53 &
+                   (loc.combine_winter_1998[,2] * (lat[13] - lat[1]) + lat[1]) > 62)
+
+
+
+dis <- 45/0.5
+par(mfrow=c(2,2), mar=c(3,3,2,2), mgp=c(1.7,1,0))
+plot(variog(data=z_local1$z,coord=z_local1[,1:2]*dis),xlim=c(0,450),ylim=c(0,.02),type='o',main="1998 winter local region1",xlab='distance (km)',col=1,lwd=2)
+lines(variog(data=z.combine_winter_1998[1,inde1],coord=z_local1[,1:2]*dis),lty=2,col=2)
+lines(variog(data=z.combine_winter_1998[2,inde1],coord=z_local1[,1:2]*dis),lty=2,col=3)
+lines(variog(data=z.combine_winter_1998[3,inde1],coord=z_local1[,1:2]*dis),lty=2,col=4)
+lines(variog(data=z.combine_winter_1998[4,inde1],coord=z_local1[,1:2]*dis),lty=2,col=5)
+lines(variog(data=z.combine_winter_1998[5,inde1],coord=z_local1[,1:2]*dis),lty=2,col=6)
+lines(variog(data=z.combine_winter_1998[6,inde1],coord=z_local1[,1:2]*dis),lty=2,col=7)
+legend("top",c("CRCM","Emulation1","Emulation2"),lwd=c(2,1,1),lty=c(1,2,2),col=c(1,2,3),horiz = T,cex=.6,bty = "n")
+legend(0,0.018,c("Emulation3","Emulation4","Emulation5","Emulation6"),lwd=c(1,1,1,1),lty=c(2,2,2,2),col=c(4,5,6,7),horiz = T,cex=.5,bty = "n")
+
+plot(variog(data=z_local2$z,coord=z_local2[,1:2]*dis),xlim=c(0,450),ylim=c(0,.02),type='o',main="1998 winter local region2",xlab='distance (km)',col=1,lwd=2)
+lines(variog(data=z.combine_winter_1998[1,inde2],coord=z_local2[,1:2]*dis),lty=2,col=2)
+lines(variog(data=z.combine_winter_1998[2,inde2],coord=z_local2[,1:2]*dis),lty=2,col=3)
+lines(variog(data=z.combine_winter_1998[3,inde2],coord=z_local2[,1:2]*dis),lty=2,col=4)
+lines(variog(data=z.combine_winter_1998[4,inde2],coord=z_local2[,1:2]*dis),lty=2,col=5)
+lines(variog(data=z.combine_winter_1998[5,inde2],coord=z_local2[,1:2]*dis),lty=2,col=6)
+lines(variog(data=z.combine_winter_1998[6,inde2],coord=z_local2[,1:2]*dis),lty=2,col=7)
+legend("top",c("CRCM","Emulation1","Emulation2"),lwd=c(2,1,1),lty=c(1,2,2),col=c(1,2,3),horiz = T,cex=.6,bty = "n")
+legend(0,0.018,c("Emulation3","Emulation4","Emulation5","Emulation6"),lwd=c(1,1,1,1),lty=c(2,2,2,2),col=c(4,5,6,7),horiz = T,cex=.5,bty = "n")
+
+
+plot(variog(data=z_local3$z,coord=z_local3[,1:2]*dis),xlim=c(0,450),ylim=c(0,.02),type='o',main="1998 winter local region3",xlab='distance (km)',col=1,lwd=2)
+lines(variog(data=z.combine_winter_1998[1,inde3],coord=z_local3[,1:2]*dis),lty=2,col=2)
+lines(variog(data=z.combine_winter_1998[2,inde3],coord=z_local3[,1:2]*dis),lty=2,col=3)
+lines(variog(data=z.combine_winter_1998[3,inde3],coord=z_local3[,1:2]*dis),lty=2,col=4)
+lines(variog(data=z.combine_winter_1998[4,inde3],coord=z_local3[,1:2]*dis),lty=2,col=5)
+lines(variog(data=z.combine_winter_1998[5,inde3],coord=z_local3[,1:2]*dis),lty=2,col=6)
+lines(variog(data=z.combine_winter_1998[6,inde3],coord=z_local3[,1:2]*dis),lty=2,col=7)
+legend("top",c("CRCM","Emulation1","Emulation2"),lwd=c(2,1,1),lty=c(1,2,2),col=c(1,2,3),horiz = T,cex=.6,bty = "n")
+legend(0,0.018,c("Emulation3","Emulation4","Emulation5","Emulation6"),lwd=c(1,1,1,1),lty=c(2,2,2,2),col=c(4,5,6,7),horiz = T,cex=.5,bty = "n")
+
+
+plot(variog(data=z_local4$z,coord=z_local4[,1:2]*dis),xlim=c(0,450),ylim=c(0,.02),type='o',main="1998 winter local region4",xlab='distance (km)',col=1,lwd=2)
+lines(variog(data=z.combine_winter_1998[1,inde4],coord=z_local4[,1:2]*dis),lty=2,col=2)
+lines(variog(data=z.combine_winter_1998[2,inde4],coord=z_local4[,1:2]*dis),lty=2,col=3)
+lines(variog(data=z.combine_winter_1998[3,inde4],coord=z_local4[,1:2]*dis),lty=2,col=4)
+lines(variog(data=z.combine_winter_1998[4,inde4],coord=z_local4[,1:2]*dis),lty=2,col=5)
+lines(variog(data=z.combine_winter_1998[5,inde4],coord=z_local4[,1:2]*dis),lty=2,col=6)
+lines(variog(data=z.combine_winter_1998[6,inde4],coord=z_local4[,1:2]*dis),lty=2,col=7)
+legend("top",c("CRCM","Emulation1","Emulation2"),lwd=c(2,1,1),lty=c(1,2,2),col=c(1,2,3),horiz = T,cex=.6,bty = "n")
+legend(0,0.018,c("Emulation3","Emulation4","Emulation5","Emulation6"),lwd=c(1,1,1,1),lty=c(2,2,2,2),col=c(4,5,6,7),horiz = T,cex=.5,bty = "n")
+
+```
+

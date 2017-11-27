@@ -1,0 +1,849 @@
+---
+title: "2d.simulation"
+author: "Yuxiao Li"
+output: pdf_document
+---
+
+#2d matern simulation study
+
+##Function for parameter setups
+```{r 2d generate theta}
+
+theta <- function (n,beta0,beta1,beta2,beta3,beta4) {
+    N <- sqrt(n)
+    theta <- matrix(n,N,N)
+    for(i in (1 : N)){
+        for(j in (1 : N)){
+            x1 <- i/N
+            x2 <- j/N
+            theta[i,j] <- beta0 + beta1*(x1 - .5) + beta2*(x2-.5) + 
+            beta3*(x1 - .5)^2 + beta4*(x2 - .5)^2
+        }
+    }
+  return(theta)
+}
+```
+
+##function for likelihood estimation
+```{r 2d likelihood}
+##Input:
+##locations: n by 2 matrix
+##data: length n*m vector, m is the number of independent replicates
+##params: spatial varying parameters, sigma
+##p: S0 estimators using NSconvo
+##Output:
+##Log likelihood
+
+local_loglik<- function (params,locations, data, p) 
+{   
+  fixed <- rep(FALSE,6 )
+  params <- fixed
+  function(s) {
+    params[!fixed] <- s
+    beta11 <- params[1]
+    beta12 <- params[2]
+    beta21 <- params[3]
+    beta22 <- params[4]
+    beta31  <- params[5]
+    beta32  <- params[6]
+    
+    beta10 <- p[1]
+    beta20 <- p[2]
+    beta30 <- p[3]
+    nu <- p[4]
+    sigma2<-p[5]
+    tau2<-p[6]
+    N <- dim(locations)[1]
+    m <- dim(data)[2]
+    beta1 <- c(beta10,beta11,beta12)
+    beta2 <- c(beta20,beta21,beta22)
+    beta3 <- c(beta30,beta31,beta32)
+    Xmat <- cbind(rep(1,N), locations - colMeans(locations))
+    kernel.local <- array(0, dim = c(2, 2, N))
+    for ( i in 1:N){
+        lam1 <- exp(sum(Xmat[i,] * beta1))
+        lam2 <- exp(sum(Xmat[i,] * beta2))
+        phi <- (pi/2) * exp(sum(Xmat[i,] * beta3))/(1 + exp(sum(Xmat[i,] * beta3)))
+        Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+        Dmat <- diag(c(lam1, lam2))
+        Sigma <- Pmat %*% Dmat %*% t(Pmat)
+        kernel.local[, , i] <-  Sigma
+    }
+    Sigma.mat <- matrix(rep(NA, N^2), nrow = N)
+    Q.mat <- matrix(rep(NA, N^2), nrow = N)
+    Inv_ij <- matrix(rep(NA,4),2,2)
+    for (i in 1:N) {
+        Sigma.mat[i, i] <- 1
+        Q.mat[i, i] <- 0
+        Kernel_i <- kernel.local[, , i]
+        det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+        if (i < N) {
+            for (j in (i + 1):N) {
+                Kernel_j <- kernel.local[, , j]
+                det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                Inv_ij[1,1] <- Kernel_ij[2,2] 
+                Inv_ij[2,2] <- Kernel_ij[1,1] 
+                Inv_ij[2,1] <- -Kernel_ij[2,1] 
+                Inv_ij[1,2] <- -Kernel_ij[1,2] 
+                det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - Kernel_ij[1,2] * Kernel_ij[2,1]
+                x <- locations[i, ] - locations[j, ]
+                Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                Sigma.mat[j, i] <- Sigma.mat[i, j]
+                Q.mat[j, i] <- Q.mat[i, j]
+            }
+        }
+    }
+    
+    cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                             cov.pars = c(sigma2, 1), kappa = nu)
+    NS.cov <- Sigma.mat * cov + diag(rep(tau2,N))
+    
+    Eigen <- eigen(NS.cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    
+    loglikelihood <-  m * sum(log(diag(Eigen_value))) + 
+        sum(diag(t(data) %*% Cov.inv %*% data))
+    if (abs(loglikelihood) == Inf) loglikelihood <- 1e+06
+    return(loglikelihood)
+  }
+}
+```
+
+##Function for simulating nonstaionary covariance grided on [0,1]^2 given spatially varying parameters
+```{r simulate cov}
+##Input:
+##n: number of locations
+##log.lam1: log of spatial range 1
+##log.lam2: log of spatial range 2
+##logit.phi: logit of rotation of anisotropy
+##sigma2: variance
+##tau2: nugget effect
+##nu: smoothness
+##Input:
+##locations:n*2 matrix indicating locations
+##NS.cov: Generated nonstationary covariance matrix
+simulation <- function(n = 100,log.lam1 = NULL,log.lam2 = NULL, logit.phi = NULL, 
+                      sigma2= NULL, tau2= NULL, nu = NULL){
+    N <- sqrt(n)
+  
+    ##generate locations
+    x1 <- (1:N)/N
+    x2 <- (1:N)/N
+    locations <- expand.grid(x1, x2)
+    locations <- as.matrix(locations)
+  
+    kernel.local <- array(0, dim = c(2, 2, n))
+    for(i in 1 : n){
+        lam1 <- exp(log.lam1[i])
+        lam2 <- exp(log.lam2[i])
+        phi <- (pi/2)*exp(logit.phi[i])/(1+exp(logit.phi[i]))
+        Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+        Dmat <- diag(c(lam1, lam2))
+        Sigma <- Pmat %*% Dmat %*% t(Pmat)
+        kernel.local[, , i] <-  Sigma
+    }
+
+    ##Calculate Matern form Nonstationary Covariance function 
+    Sigma.mat <- matrix(rep(NA, n^2), nrow = n)
+    Q.mat <- matrix(rep(NA, n^2), nrow = n)
+    Inv_ij <- matrix(rep(NA,4),2,2)
+    for (i in 1:n) {
+        Sigma.mat[i, i] <- 1
+        Q.mat[i, i] <- 0
+        Kernel_i <- kernel.local[, , i]
+        det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+        if (i < n) {
+            for (j in (i + 1):n) {
+                Kernel_j <- kernel.local[, , j]
+                det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                Inv_ij[1,1] <- Kernel_ij[2,2] 
+                Inv_ij[2,2] <- Kernel_ij[1,1] 
+                Inv_ij[2,1] <- - Kernel_ij[2,1] 
+                Inv_ij[1,2] <- - Kernel_ij[1,2] 
+                det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - Kernel_ij[1,2] * Kernel_ij[2,1]
+                x <- locations[i, ] - locations[j, ]
+                Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                Sigma.mat[j, i] <- Sigma.mat[i, j]
+                Q.mat[j, i] <- Q.mat[i, j]
+            }
+        }
+    }
+    cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                           cov.pars = c(sigma2, 1), kappa = nu)
+    NS.cov <- Sigma.mat * cov + diag(rep(tau2,n))
+  
+    return(list(locations = locations,NS.cov = NS.cov))
+}
+```
+
+##Simulate the GRF and show some nonstationary features
+```{r 2d initial}
+library(convoSPAT)
+library(geoR)
+library(fields)
+
+##Parameter setups
+n<-400
+N<-sqrt(n)
+log.lam1<-theta(n,-3,0,0,-6,-7)
+log.lam2<-theta(n,-5,0,0,6,-4)
+logit.phi<-theta(n,0,1,-2,0,1)
+sigma2 <- 1
+tau2 <- .1
+nu <- 2
+
+##Plot the nonstationary parameters
+par(mfrow = c(2,2),mar = c(3, 3, 1, 1),mgp = c(1.5,.5,0))
+image.plot(exp(log.lam1),zlim = c(0,.05),xlab = expression(s[1]),ylab = expression(s[2]))
+title(main = list(expression(lambda[1]),cex = 1.5,font = 5))
+contour(exp(log.lam1),add = T)
+
+image.plot(exp(log.lam2),zlim = c(0,0.031),xlab = expression(s[1]),ylab = expression(s[2]))
+title(main = list(expression(lambda[2]),cex = 1.5,font = 5))
+contour(exp(log.lam2),add = T)
+
+image.plot(pi/2 * exp(logit.phi)/(1 + exp(logit.phi)),zlim = c(0.3,1.3),
+           xlab = expression(s[1]),ylab = expression(s[2]))
+title(main = list(expression(phi),cex = 1.5,font = 5))
+contour(pi/2 * exp(logit.phi)/(1 + exp(logit.phi)),add = T)
+
+##Generate Random Fields
+real <- simulation(n = n, log.lam1 = c(log.lam1),log.lam2 = c(log.lam2), 
+                   logit.phi = c(logit.phi), sigma2= sigma2, tau2 = tau2, nu = nu)
+
+###  true contours and images for covariance function
+NS.cov <- real$NS.cov
+image.plot(NS.cov,xaxt = 'n',yaxt = 'n',ylim = c(1,0),main = 'Covariance Matrix')
+
+par(mfrow=c(2,2))
+par(mar = c(3, 3, 1, 1))
+nf <- layout(matrix(c(1,1,0,0,2,2,1,1,3,3,2,2,4,4,3,3,5,5,4,4,0,0,5,5), 6, 4),respect = F)
+layout.show(nf)
+
+NS.corner1 <- matrix(NS.cov[10,],sqrt(n),sqrt(n),byrow = T)
+image(NS.corner1,col = topo.colors(64),
+      xlab = expression(s[1]),ylab = expression(s[2]),main = 'Left')
+contour(NS.corner1,add = T)
+
+NS.corner2 <- matrix(NS.cov[390,],sqrt(n),sqrt(n),byrow = T)
+image(NS.corner2,col = topo.colors(64),
+      xlab = expression(s[1]),ylab = expression(s[2]),main = 'Right')
+contour(NS.corner2,add = T)
+
+NS.corner3 <- matrix(NS.cov[170,],sqrt(n),sqrt(n),byrow = T)
+image(NS.corner3,col = topo.colors(64),
+        xlab = expression(s[1]),ylab = expression(s[2]),main = 'Center')
+contour(NS.corner3,add = T)
+
+NS.corner4 <- matrix(NS.cov[200,],sqrt(n),sqrt(n),byrow = T)
+image(NS.corner4,col = topo.colors(64),
+      xlab = expression(s[1]),ylab = expression(s[2]),main = 'Top')
+contour(NS.corner4,add = T)
+  
+NS.corner5 <- matrix(NS.cov[181,],sqrt(n),sqrt(n),byrow = T)
+image(NS.corner5,col = topo.colors(64),
+      xlab = expression(s[1]),ylab = expression(s[2]),main = 'Bottom')
+contour(NS.corner5,add = T)
+
+```
+
+##Estimating beta0 using convoSPAT::NSconvo_fit function
+```{r 2d step 1}
+###  Local stationary estimation
+N.mc <- 4
+fit.radius <- 0.29
+rslt <- NSconvo_fit(coords = real$locations,data = t(real$sim.data),
+                    cov.model = "matern",fit.radius = fit.radius, N.mc = N.mc)
+
+## Local stationary Estimators  
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p <- matrix(0,N.mc,6)
+for (i in 1:N.mc) {
+    p[i,] <- c(log(beta0_lam1[i]),log(beta0_lam2[i]),log(beta0_phi[i]/(pi/2 - beta0_phi[i])),
+               nu.est,sigma2.est,tau2.est)
+}
+
+#saveRDS(p,"p_2d.Rda")
+#saveRDS(mc.locations,"mc.locations.Rda")
+```
+
+##Estimating beta1 and beta2 based on different partitions.
+```{r 2d step 2 option1, eval = FALSE}
+## Divide by Square
+nk <- N.mc
+Nk <- sqrt(nk)
+nkr <- n/nk
+NKR <- sqrt(nkr)
+local.index <- rep(0, nkr)
+for(j in 1:NKR){
+    local.index[(1 + (j - 1) * NKR):(j * NKR)] <- (1 + (j - 1) * Nk * NKR):(((j - 1) * Nk * NKR) + NKR)
+}
+LL.est <- matrix(0,nk,6)
+
+for(l in 1 : Nk){
+    for (k in 1 : Nk) {
+        index <- (k-1)*NKR+ local.index + Nk*nkr*(l-1)
+        temp.locations<- real$locations[index,]
+        temp.data<- t(real$sim.data)[index,]
+        make.local.loglik <- local_loglik(locations = temp.locations, 
+                                          data = temp.data, p = p[l+(k-1)*Nk,]) 
+        MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, method="BFGS")
+        if (MLEs.local$convergence != 0) {
+            if (MLEs.local$convergence == 52) {
+                cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                    MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                    sep = ""))
+            }
+            else {
+                cat(paste("  There was an error with optim(): \n  ", 
+                          MLEs.local$convergence, "  ", MLEs.local$message, "\n",
+                          sep = ""))
+            }
+        }
+    LL.est[l+(k-1)*Nk,]<-MLEs.local$par
+    }
+}
+
+LL.est<-LL.est.circle
+```
+
+```{r 2d step 2 option2}
+
+##Or Divide by Circle
+
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1<-abs(real$locations[, 1] - mc.locations[k, 1])
+    d2<-abs(real$locations[, 2] - mc.locations[k, 2])
+    temp.locs <- real$locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- real$sim.data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,]<-MLEs.local$par
+}
+
+LL.est<-LL.est.circle
+```
+
+##Smooth the parameters and show results
+```{r 2d results}
+##  Smooth the estimators
+lam1.est <- lam2.est <- phi.est <- matrix(0,N,N)
+lam1.est.ll <- lam2.est.ll <- phi.est.ll <- matrix(0,N,N)
+weights <-  array(0,c(N,N,N.mc))
+for(i in (1 : N)){
+    for(j in (1 : N)){
+        x1 <- i/N
+        x2 <- j/N
+        for(k in 1:N.mc) {
+            weights[i,j,k] < -exp(-sum((c(x1,x2) - mc.locations[k,])^2)/2/h)
+        }
+        weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+        ##WS0 estimators
+        lam1.est[i,j] <- sum(weights[i,j,] * p[,1])
+        lam2.est[i,j] <- sum(weights[i,j,] * p[,2])
+        phi.est[i,j] <- sum(weights[i,j,] * p[,3])
+        ##NS1 estimators
+        lam1.est.ll[i,j] <- sum(weights[i,j,] * (p[,1] + 
+                                                LL.est[,1] * (x1 - mc.locations[,1]) +
+                                                LL.est[,2] * (x2-mc.locations[,2])))
+        lam2.est.ll[i,j] <- sum(weights[i,j,] * (p[,2] + 
+                                                LL.est[,3] * (x1 - mc.locations[,1]) + 
+                                                LL.est[,4] * (x2-mc.locations[,2])))
+        phi.est.ll[i,j] <- sum(weights[i,j,] * (p[,3] + 
+                                                LL.est[,5] * (x1 - mc.locations[,1]) +
+                                                LL.est[,6]*(x2-mc.locations[,2])))
+    }
+}
+  
+##Compare contours
+Sigma.est <- array(0,dim = c(n,2,2))
+for (q in 1:n){
+    eigenvec < -pi/2 * exp(c(phi.est)[q])/(1 + exp(c(phi.est)[q]))
+    eigenval <- exp(c(c(lam1.est)[q], c(lam2.est)[q]))
+    Pmat.est <- matrix(c(cos(eigenvec), -sin(eigenvec), 
+                         sin(eigenvec), cos(eigenvec)),2, 2 ,byrow = T)
+    Dmat.est <- diag(eigenval)
+    Sigma.est[q,,] <- Pmat.est %*% Dmat.est %*% t(Pmat.est)
+}
+Sigma.est.ll <- array(0,dim = c(n,2,2))
+for (q in 1:n){
+    eigenvec <- pi/2 * exp(c(phi.est.ll)[q])/(1 + exp(c(phi.est.ll)[q]))
+    eigenval <- exp(c(c(lam1.est.ll)[q], c(lam2.est.ll)[q]))
+    Pmat.est.ll <- matrix(c(cos(eigenvec), -sin(eigenvec), 
+                            sin(eigenvec), cos(eigenvec)),2, 2, byrow = T)
+    Dmat.est.ll <- diag(eigenval)
+    Sigma.est.ll[q,,] <- Pmat.est.ll %*% Dmat.est.ll %*% t(Pmat.est.ll)
+}
+  
+par(mar = c(3, 3, 1, 1), mgp = c(2,.5,0))
+nf <- layout(matrix(c(1,1,0,0,2,2,1,1,3,3,2,2,4,4,3,3,5,5,4,4,0,0,5,5), 6, 4),respect = F)
+
+for(pp in c(1,20,170,381,400)) {
+    plot(ellipse::ellipse(real$kernel.local[,,pp],
+                          centre=c(real$locations[pp,])),
+         col='black',type='l',lwd=1,lty=1,xlim=c(-.2,1.2),ylim=c(-.2,1.2),
+         xlab = expression(s[1]),ylab=expression(s[2]))
+    points(real$locations[pp,][1],real$locations[pp,][2],pch=16)
+    lines(ellipse::ellipse(Sigma.est[pp,,],centre = c(real$locations[pp,])),
+          col='green',lwd=2,lty=2)
+    lines(ellipse::ellipse(Sigma.est.ll[pp,,],centre = c(real$locations[pp,])),
+          col='red',lwd=2,lty=3)
+    if (pp == 20|pp == 400){
+        legend('topleft',c("Truth","WS0","NS1"),col=c('black','green','red'),lwd=c(1,2,2),lty=c(1,2,3),bty='n')
+    }             
+    else {
+        legend('bottomright',c("Truth","WS0","NS1"),col=c('black','green','red'),lwd=c(1,2,2),lty=c(1,2,3),bty='n')
+    }
+}
+  
+##Compare estimators
+par(mfrow = c(3,3))
+image.plot(exp(log.lam1),xlab = 'x coordiate',ylab = 'y coordiate',
+           main = expression('true'~ lambda~'_1'))
+contour(exp(log.lam1),add = T)
+
+image.plot(exp(log.lam2),xlab = 'x coordiate',ylab = 'y coordiate',
+           main = expression('true'~lambda~'_2'))
+contour(exp(log.lam2),add=T)
+  
+image.plot(pi/2 * exp(logit.phi)/(1 + exp(logit.phi)),xlab = 'x coordiate',
+           ylab = 'y coordiate',main = expression('true'~ phi))
+contour(pi/2 * exp(logit.phi)/(1 + exp(logit.phi)),add = T)
+  
+image.plot(exp(lam1.est),xlab = 'x coordiate',ylab = 'y coordiate',
+           main = expression('local stationary estimation of'~ lambda~'_1'))
+contour(exp(lam1.est),add = T)
+
+image.plot(exp(lam2.est),xlab = 'x coordiate',ylab = 'y coordiate',
+           main = expression('local stationary estimation of'~ lambda~'_2'))
+contour(exp(lam2.est),add = T)
+
+image.plot(pi/2 * exp(phi.est)/(1 + exp(phi.est)),xlab='x coordiate',ylab='y coordiate',
+           main = expression('local stationary estimation of'~ ~ phi))
+contour(pi/2*exp(phi.est)/(1+exp(phi.est)),add = T)
+
+image.plot(exp(lam1.est.ll),xlab = 'x coordiate',ylab = 'y coordiate',
+           main = expression('first order nonstationary estimation of'~ lambda~'_1'))
+contour(exp(lam1.est.ll),add = T)
+
+image.plot(exp(lam2.est.ll),xlab = 'x coordiate',ylab = 'y coordiate', 
+           main=expression('first order nonstationary estimation of'~ lambda~'_2'))
+contour(exp(lam2.est.ll),add = T)
+image.plot(pi/2 * exp(phi.est.ll)/(1 + exp(phi.est.ll)),xlab = 'x coordiate',
+           ylab='y coordiate',main=expression('first order nonstationary estimation of'~ phi))
+contour(pi/2 * exp(phi.est.ll)/(1 + exp(phi.est.ll)),add = T)
+  
+  
+## relative Error
+sims <- simulation(n = n, log.lam1 = c(lam1.est),log.lam2 = c(lam2.est), 
+                   logit.phi = c(phi.est),sigma2 = sigma2, tau2= tau2, nu = nu)
+LScov <- sims$NS.cov
+Es <- sum((NS.cov - LScov)^2)/sum(NS.cov^2)
+sims.ll <- simulation(n = n, log.lam1 = c(lam1.est.ll),log.lam2 = c(lam2.est.ll), 
+                      logit.phi = c(phi.est.ll), sigma2 = sigma2, tau2= tau2, nu = nu)
+LLcov <- sims.ll$NS.cov
+Es1 <- sum((NS.cov - LLcov)^2)/sum(NS.cov^2)
+par(mfrow = c(1,3))
+image.plot(NS.cov,xaxt = 'n',yaxt = 'n',main = 'Truth')
+image.plot(LLcov,xaxt = 'n',yaxt = 'n',main = 'Local stationary Model')
+image.plot(LScov,xaxt = 'n',yaxt = 'n',main = 'First order nonstaionary model')
+
+Es-Es1
+  
+```
+
+##Function for repeating estimations 100 times in parallel
+```{r func repeat}
+library(parallel)
+no_cores <- detectCores() - 6
+cl <- makeCluster(no_cores)
+
+nsfit<-function(rep){
+theta <- function (n,beta0,beta1,beta2,beta3,beta4) {
+    N <- sqrt(n)
+    theta <- matrix(n,N,N)
+    for(i in (1 : N)){
+        for(j in (1 : N)){
+            x1 <- i/N
+            x2 <- j/N
+            theta[i,j] <- beta0 + beta1*(x1 - .5) + beta2*(x2-.5) + 
+            beta3*(x1 - .5)^2 + beta4*(x2 - .5)^2
+        }
+    }
+  return(theta)
+}
+
+simulation <- function(n = 100,log.lam1 = NULL,log.lam2 = NULL, logit.phi = NULL, 
+                      sigma2= NULL, tau2= NULL, nu = NULL){
+    N <- sqrt(n)
+  
+    ##generate locations
+    x1 <- (1:N)/N
+    x2 <- (1:N)/N
+    locations <- expand.grid(x1, x2)
+    locations <- as.matrix(locations)
+  
+    kernel.local <- array(0, dim = c(2, 2, n))
+    for(i in 1 : n){
+        lam1 <- exp(log.lam1[i])
+        lam2 <- exp(log.lam2[i])
+        phi <- (pi/2)*exp(logit.phi[i])/(1+exp(logit.phi[i]))
+        Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+        Dmat <- diag(c(lam1, lam2))
+        Sigma <- Pmat %*% Dmat %*% t(Pmat)
+        kernel.local[, , i] <-  Sigma
+    }
+
+    ##Calculate Matern form Nonstationary Covariance function 
+    Sigma.mat <- matrix(rep(NA, n^2), nrow = n)
+    Q.mat <- matrix(rep(NA, n^2), nrow = n)
+    Inv_ij <- matrix(rep(NA,4),2,2)
+    for (i in 1:n) {
+        Sigma.mat[i, i] <- 1
+        Q.mat[i, i] <- 0
+        Kernel_i <- kernel.local[, , i]
+        det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+        if (i < n) {
+            for (j in (i + 1):n) {
+                Kernel_j <- kernel.local[, , j]
+                det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                Inv_ij[1,1] <- Kernel_ij[2,2] 
+                Inv_ij[2,2] <- Kernel_ij[1,1] 
+                Inv_ij[2,1] <- - Kernel_ij[2,1] 
+                Inv_ij[1,2] <- - Kernel_ij[1,2] 
+                det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - Kernel_ij[1,2] * Kernel_ij[2,1]
+                x <- locations[i, ] - locations[j, ]
+                Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                Sigma.mat[j, i] <- Sigma.mat[i, j]
+                Q.mat[j, i] <- Q.mat[i, j]
+            }
+        }
+    }
+    cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                           cov.pars = c(sigma2, 1), kappa = nu)
+    NS.cov <- Sigma.mat * cov + diag(rep(tau2,n))
+  
+    return(list(locations = locations,NS.cov = NS.cov))
+}
+
+local_loglik<- function (params,locations, data, p) 
+{   
+  fixed <- rep(FALSE,6 )
+  params <- fixed
+  function(s) {
+    params[!fixed] <- s
+    beta11 <- params[1]
+    beta12 <- params[2]
+    beta21 <- params[3]
+    beta22 <- params[4]
+    beta31  <- params[5]
+    beta32  <- params[6]
+    
+    beta10 <- p[1]
+    beta20 <- p[2]
+    beta30 <- p[3]
+    nu <- p[4]
+    sigma2<-p[5]
+    tau2<-p[6]
+    N <- dim(locations)[1]
+    m <- dim(data)[2]
+    beta1 <- c(beta10,beta11,beta12)
+    beta2 <- c(beta20,beta21,beta22)
+    beta3 <- c(beta30,beta31,beta32)
+    Xmat <- cbind(rep(1,N), locations - colMeans(locations))
+    kernel.local <- array(0, dim = c(2, 2, N))
+    for ( i in 1:N){
+        lam1 <- exp(sum(Xmat[i,] * beta1))
+        lam2 <- exp(sum(Xmat[i,] * beta2))
+        phi <- (pi/2) * exp(sum(Xmat[i,] * beta3))/(1 + exp(sum(Xmat[i,] * beta3)))
+        Pmat <- matrix(c(cos(phi), -sin(phi), sin(phi), cos(phi)), nrow = 2, byrow = T)
+        Dmat <- diag(c(lam1, lam2))
+        Sigma <- Pmat %*% Dmat %*% t(Pmat)
+        kernel.local[, , i] <-  Sigma
+    }
+    Sigma.mat <- matrix(rep(NA, N^2), nrow = N)
+    Q.mat <- matrix(rep(NA, N^2), nrow = N)
+    Inv_ij <- matrix(rep(NA,4),2,2)
+    for (i in 1:N) {
+        Sigma.mat[i, i] <- 1
+        Q.mat[i, i] <- 0
+        Kernel_i <- kernel.local[, , i]
+        det_i <- Kernel_i[1,1] * Kernel_i[2,2] - Kernel_i[1,2] * Kernel_i[2,1]
+        if (i < N) {
+            for (j in (i + 1):N) {
+                Kernel_j <- kernel.local[, , j]
+                det_j <- Kernel_j[1,1] * Kernel_j[2,2] - Kernel_j[1,2] * Kernel_j[2,1]
+                Kernel_ij <- 0.5 * (Kernel_i + Kernel_j)
+                Inv_ij[1,1] <- Kernel_ij[2,2] 
+                Inv_ij[2,2] <- Kernel_ij[1,1] 
+                Inv_ij[2,1] <- -Kernel_ij[2,1] 
+                Inv_ij[1,2] <- -Kernel_ij[1,2] 
+                det_ij <- Kernel_ij[1,1] * Kernel_ij[2,2] - Kernel_ij[1,2] * Kernel_ij[2,1]
+                x <- locations[i, ] - locations[j, ]
+                Sigma.mat[i, j] <- sqrt(sqrt(det_i * det_j)/det_ij)
+                Q.mat[i, j] <- sqrt(t(x) %*% Inv_ij %*% x/det_ij)
+                Sigma.mat[j, i] <- Sigma.mat[i, j]
+                Q.mat[j, i] <- Q.mat[i, j]
+            }
+        }
+    }
+    
+    cov <- geoR::cov.spatial(Q.mat, cov.model = "matern", 
+                             cov.pars = c(sigma2, 1), kappa = nu)
+    NS.cov <- Sigma.mat * cov + diag(rep(tau2,N))
+    
+    Eigen <- eigen(NS.cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    
+    loglikelihood <-  m * sum(log(diag(Eigen_value))) + 
+        sum(diag(t(data) %*% Cov.inv %*% data))
+    if (abs(loglikelihood) == Inf) loglikelihood <- 1e+06
+    return(loglikelihood)
+  }
+}
+n <- 400
+log.lam1 <- theta(n,-3,0,0,-6,-7)
+log.lam2 <- theta(n,-5,0,0,6,-4)
+logit.phi <- theta(n,0,1,-2,0,1)
+  sigma2 <- 1
+  tau2 <- .1
+  nu <- 2
+real <- simulation(n = n, log.lam1 = c(log.lam1),log.lam2 = c(log.lam2), 
+                   logit.phi = c(logit.phi), 
+                   sigma2= sigma2, tau2= tau2, nu = nu)
+N.mc <- 4
+fit.radius <- 0.29
+rslt <- NSconvo_fit(coords = real$locations,data = t(real$sim.data),cov.model = "matern",fit.radius = fit.radius, N.mc = N.mc)
+mc.locations <- rslt$mc.locations
+beta0_lam1 <- rslt$MLEs.save$lam1
+beta0_lam2 <- rslt$MLEs.save$lam2
+beta0_phi <- rslt$MLEs.save$eta
+sigma2.est <- rslt$sigmasq.est
+tau2.est <- rslt$tausq.est
+nu.est <- rslt$kappa.MLE
+h <- rslt$lambda.w
+p <- matrix(0,N.mc,6)
+for (i in 1:N.mc) p[i,] <-c(log(beta0_lam1[i]),log(beta0_lam2[i]),
+                            log(beta0_phi[i]/(pi/2-beta0_phi[i])),
+                            nu.est,sigma2.est,tau2.est)
+
+LL.est.circle <- matrix(0,N.mc,6)
+for (k in 1:N.mc) {
+    d1<-abs(real$locations[, 1] - mc.locations[k, 1])
+    d2<-abs(real$locations[, 2] - mc.locations[k, 2])
+    temp.locs <- real$locations[(d1 <= fit.radius) & (d2 <= fit.radius), ]
+    temp.dat <- real$sim.data[,(d1 <= fit.radius) & (d2 <= fit.radius) ]
+    distances <- rep(NA, dim(temp.locs)[1])
+    for (i in 1:dim(temp.locs)[1]) {
+        distances[i] <- sqrt(sum((temp.locs[i, ] - mc.locations[k, ])^2))
+    }
+    temp.locations <- temp.locs[distances <= fit.radius, ]
+    n.fit <- dim(temp.locations)[1]
+    temp.dat <- as.matrix(temp.dat, nrow = n.fit)
+    temp.data <- temp.dat[,distances <= fit.radius ]
+    temp.data <- as.matrix(temp.data, nrow = n.fit)
+    if (k == 1) {
+        cat("Calculating the linear terms for:\n")
+    }
+    cat("mixture component location ", k, ", using ", 
+        n.fit, " observations...\n", sep = "")
+    make.local.loglik <- local_loglik(locations = temp.locations, 
+                                      data = t(temp.data), p = p[k,]) 
+    MLEs.local <- optim(c(0,0,0,0,0,0), make.local.loglik, 
+                        method="L-BFGS-B", lower = -10, upper = 10)
+    if (MLEs.local$convergence != 0) {
+        if (MLEs.local$convergence == 52) {
+        cat(paste("  There was a NON-FATAL error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+        else {
+        cat(paste("  There was an error with optim(): \n  ", 
+                  MLEs.local$convergence, "  ", MLEs.local$message, "\n", 
+                  sep = ""))
+        }
+    }
+    LL.est.circle[k,]<-MLEs.local$par
+}
+est<-cbind(p,LL.est.circle)
+return(est)
+}
+
+```
+
+##Show some comparisons based on 100 estimators
+```{r 2d results 100 times}
+n <- 400
+rep <- 100
+ns.result <- parLapply(cl, 1:rep ,nsfit)
+#setwd("~/Documents")
+#saveRDS(ns.result,"2dsims-100-new.rds")
+#ns.result<-readRDS("/Users/liy0h/Dropbox/My Research/Nonstationary paper/code/Final code/2dsims-100-new.rds")
+LL.array <- array(0,c(4,12,rep))
+for(i in 1:100) LL.array[,,i] <- ns.result[[i]]
+
+##most representative curve
+#mm<-matrix(0,4,12)
+#index<-c()
+#for(j in 1:4){
+#index<-fbplot(LL.array[j,,],method = "Both",plot=F)$medcurve
+#mm[j,]<-LL.array[j,,index]
+#}
+#p<-mm[,1:3]
+#LL.est<-mm[,7:12]
+
+##Mean curve
+p <- apply(LL.array,c(1,2),mean)[,1:3]
+LL.est <- apply(LL.array,c(1,2),mean)[,7:12]
+
+####
+mc.locations <- readRDS("/Users/liy0h/Documents/mc.locations.Rda")
+##  
+lam1.est <- lam2.est <- phi.est <- matrix(0,N,N)
+lam1.est.ll <- lam2.est.ll <- phi.est.ll <- matrix(0,N,N)
+weights <- array(0,c(N,N,N.mc))
+h = .0564
+for(i in (1 : N)){
+    for(j in (1 : N)){
+        x1 <- i/N
+        x2 <- j/N
+        for(k in 1:N.mc) {
+            weights[i,j,k]<-exp(-sum((c(x1,x2)-mc.locations[k,])^2)/2/h)
+        }
+    weights[i,j,] <- weights[i,j,]/sum(weights[i,j,])
+    lam1.est[i,j] <- sum(weights[i,j,] * p[,1])
+    lam2.est[i,j] <- sum(weights[i,j,] * p[,2])
+    phi.est[i,j] <- sum(weights[i,j,] * p[,3])
+    lam1.est.ll[i,j] <- sum(weights[i,j,] * (p[,1] + 
+                                            LL.est[,1] * (x1 - mc.locations[,1]) + 
+                                            LL.est[,2] * (x2-mc.locations[,2])))
+    lam2.est.ll[i,j] <- sum(weights[i,j,] * (p[,2] + 
+                                            LL.est[,3]*(x1-mc.locations[,1]) +
+                                            LL.est[,4]*(x2-mc.locations[,2])))
+    phi.est.ll[i,j] <- sum(weights[i,j,] * (p[,3] + 
+                                            LL.est[,5]*(x1-mc.locations[,1]) +
+                                            LL.est[,6]*(x2-mc.locations[,2])))
+    }
+}
+
+##Function for generating S0
+theta1 <- function (nk,beta0) {
+    theta <- NULL
+    Nk <- sqrt(nk)
+    for(k in (1 : Nk)){
+        theta.col <- NULL
+        for(l in (1 : Nk))
+        {  
+            theta.local <- matrix(0,100,100)
+            for(i in (1 : 100)){
+                for(j in (1 : 100)){
+                    x1 <-i/100
+                    x2 <-j/100
+                    theta.local[i,j]<-beta0[l+(k-1)*Nk] 
+                }
+            }
+            theta.col <- rbind(theta.col,theta.local)
+        }
+        theta <- cbind(theta,theta.col)
+    }
+    return(theta)
+}
+
+par(mfrow=c(3,3), mar = c(2.2,3,2,1), mgp = c(1.3,.5,0))
+
+image.plot(exp(theta1(4,p[,1])),zlim = c(0,.05))
+title(main = list(expression(lambda[1]),cex = 2,font = 5),
+      xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab = list("S0 estimates", cex = 2, font = 3))
+contour(exp(theta1(4,p[,1])),add = T)
+
+image.plot(exp(theta1(4,p[,2])),zlim = c(0,0.031))
+title(main = list(expression(lambda[2]),cex = 2,font = 5),
+      xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab = list(expression(s[2]), cex = 1, font = 3))
+contour(exp(theta1(4,p[,2])),add = T)
+
+image.plot(pi/2 * exp(theta1(4,p[,3]))/(1 + exp(theta1(4,p[,3]))),zlim = c(0.3,1.3))
+title(main = list(expression(phi),cex = 2,font = 5),
+      xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab=list(expression(s[2]), cex = 1, font = 3))
+contour(pi/2 * exp(theta1(4,p[,3]))/(1 + exp(theta1(4,p[,3]))),add = T)
+
+image.plot(exp(lam1.est),zlim = c(0,0.055))
+title(ylab = list("WS0 estimates", cex = 2, font = 3),
+      xlab=list(expression(s[1]), cex = 1, font = 3))
+contour(exp(lam1.est),add = T)
+
+image.plot(exp(lam2.est),zlim = c(0,0.031))
+title(xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab = list(expression(s[2]), cex = 1, font = 3))
+contour(exp(lam2.est),add = T)
+
+image.plot(pi/2 * exp(phi.est)/(1 + exp(phi.est)),zlim = c(0.3,1.3))
+contour(pi/2 * exp(phi.est)/(1 + exp(phi.est)),add = T)
+title(xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab = list(expression(s[2]), cex = 1, font = 3))
+
+image.plot(exp(lam1.est.ll),zlim = c(0,0.055))
+title(ylab = list("NS1 estimates", cex = 2, font = 3),
+      xlab = list(expression(s[1]), cex = 1, font = 3))
+contour(exp(lam1.est.ll),add = T)
+
+image.plot(exp(lam2.est.ll),zlim = c(0,0.031))
+title(xlab = list(expression(s[1]), cex = 1, font = 3),
+      ylab=list(expression(s[2]), cex = 1, font = 3))
+contour(exp(lam2.est.ll),add = T)
+
+image.plot(pi/2 * exp(phi.est.ll)/(1 + exp(phi.est.ll)),zlim = c(0.3,1.3))
+title(xlab=list(expression(s[1]), cex = 1, font = 3),
+      ylab=list(expression(s[2]), cex = 1, font = 3))
+contour(pi/2 * exp(phi.est.ll)/(1 + exp(phi.est.ll)),add = T)
+
+```
+

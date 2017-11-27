@@ -1,0 +1,429 @@
+---
+title: "1d.simulation"
+author: "Yuxiao Li"
+output: pdf_document
+---
+# 1D simulation
+
+##likelihood function for estimating beta0
+```{r 1d beta0 lik}
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##params: spatial varying parameters, sigma
+##Output:
+##Log likelihood
+lik1<-function(params,location,data){
+    sigmasq <- params^2
+    n <- dim(location)[1]
+    dist <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <- sqrt(sum((location[i,]-location[j,])^2))  
+        }
+    }
+  
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                       cov.pars = c(sigmasq, 0.2), kappa = 1)
+    Eigen <- eigen(cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 0.000005 * (sum(log(diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+##likelihood function for estimating beta1
+```{r 1d beta1 lik}
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##beta0: intercept of sigma, estimated using function lik1
+##beta1: slope of sigma
+##Output:
+##Log likelihood
+lik2<-function(beta1, beta0, location, data){
+    sigmasq <- (beta0 + beta1*(location[,1]-mean(location[,1])))^2
+    n <- dim(location)[1]
+    dist <- sigmamat <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <-sqrt(sum((location[i,]-location[j,])^2))
+            sigmamat[i,j] <-sqrt(sigmasq[i]*sigmasq[j])
+        }
+    }
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                     cov.pars = c(1, 0.2), kappa = 1)
+    Eigen <- eigen(sigmamat*cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 0.0005 * (sum(log(diag(Eigen_value))) + 
+                                   sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+##Simulate the GRF, estimate the parameters, and smooth the parameters
+```{r 1d matern}
+library(geoR)
+library(fda)
+library(ggplot2)
+library(cowplot)
+##parameter setup
+t <- (1:200)/200
+##true sigma
+y <- (2 * sin(t/0.15) + 2.8)
+v.vec <- v2.vec <- c()
+
+##simulate Gaussian random field
+set.seed(1)
+sim11 <- grf(200, grid = "reg", ny=1, 
+             nsim=1000, xlims=c(0,1),cov.model ="matern",
+             cov.pars=c(1, 0.2), kappa = 1, nug=0, mean = 0)
+#image(sim11)
+u_1 <- y * sim11$data[,2]
+
+plot1 <- qplot(t,u_1,geom = "line",xlab='s',ylab='Z')
+plot2 <- qplot(t[1:199],u_1[-200]-u_1[-1],geom = "line",xlab='s',ylab=expression(Delta[Z]))
+plot_grid(plot1, plot2, align='h')
+
+##estimation
+##local stationary
+v.vec <- v2.vec <- c()
+##Repeat 1000 times
+niters <- 1000
+for(rep in 1:niters){
+u <- y*sim11$data[,rep]
+##estimate beta0
+v<-c()
+v[1] <- optimize(lik1,c(0,10),location = cbind(t[1:50],1),data = u[1:50])$minimum
+v[2] <- optimize(lik1,c(0,10),location = cbind(t[51:100],1),data = u[51:100])$minimum
+v[3] <- optimize(lik1,c(0,10),location = cbind(t[101:150],1),data = u[101:150])$minimum
+v[4] <- optimize(lik1,c(0,10),location = cbind(t[151:200],1),data = u[151:200])$minimum
+
+##estimate beta1
+v2 <- c()
+v2[1] <- optimize(lik2,c(-20,20), beta0 = v[1], 
+                  location = cbind(t[1:50],1), data = u[1:50])$minimum
+v2[2] <- optimize(lik2,c(-20,20), beta0 = v[2], 
+                  location = cbind(t[51:100],1), data = u[51:100])$minimum
+v2[3] <- optimize(lik2,c(-20,20),beta0 = v[3], 
+                  location = cbind(t[101:150],1), data = u[101:150])$minimum
+v2[4] <- optimize(lik2,c(-20,20),beta0 = v[4], 
+                  location = cbind(t[151:200],1), data = u[151:200])$minimum
+v.vec <- cbind(v, v.vec)
+v2.vec <- cbind(v2, v2.vec)
+}
+
+##Save the results
+#sims.1d <- cbind(v.vec,v2.vec)
+#saveRDS(sims.1d,'sims.1d.rds')
+sims.1d <- readRDS('sims.1d.rds')
+
+v.vec <- sims.1d[, 1:niters]
+v2.vec <- sims.1d[, (niters+1):(2*niters)]
+h1 <- h2 <- (0.5 * sqrt(sum((mcloc[1] - mcloc[2])^2)))^2
+##h1 <- optimize(cv1,c(0,1))$minimum
+##h2 <- optimize(cv2,c(0,1))$minimum
+
+##smooth the estimators
+theta <- theta2 <- matrix(0,niters,200)
+for(j in 1:niters){
+thetak <- v.vec[,j]
+beta <- v2.vec[,j]
+mcloc <- c(1.25,3.75,6.25,8.75)/10
+loc <- (1:200)/200
+weight <- matrix(0,200,4)
+for(i in 1:200){
+    for(k in 1:4){
+        weight[i,k]<- exp(-(loc[i] - mcloc[k])^2/2/h1)
+    }
+    weight[i,]<-weight[i,]/sum(weight[i,])
+}
+
+##WS0 estimators
+for(i in 1:200){
+  theta[j,i] <- sum(weight[i,] * thetak)
+}
+
+weight<-matrix(0,200,4)
+for(i in 1:200){
+  for(k in 1:4){
+    weight[i,k] <- exp(-(loc[i] - mcloc[k])^2/2/h2)
+  }
+  weight[i, ]<-weight[i,]/sum(weight[i,])
+}
+
+##NS1 estimators
+for(i in 1:200){
+  theta2[j,i] <- sum(weight[i,] * (thetak + beta * (loc[i] - mcloc)))
+}
+}
+##S0 estimators
+theta0 <- rep(thetak, each = 50) 
+
+
+```
+
+##Show results: plots and tables
+```{r 1d results}
+
+##Calculate the mean and standard deviation
+m1 <- round(apply(v.vec,1,mean),2)
+m2 <- round(apply(v2.vec,1,mean),2)
+sd1 <- round(apply(v.vec,1,sd),2)
+sd2 <- round(apply(v2.vec,1,sd),2)
+
+##Degree of nonstationarity
+deg <- mean(abs(m2))
+##Mean squared error
+theta.m <- theta2.m <- rep(0,200)
+weight <- matrix(0,200,4)
+for(i in 1:200){
+    for(k in 1:4){
+        weight[i,k]<- exp(-(loc[i] - mcloc[k])^2/2/h1)
+    }
+    weight[i,]<-weight[i,]/sum(weight[i,])
+}
+
+for(i in 1:200){
+  theta.m[i] <- sum(weight[i,] * m1)
+}
+
+weight<-matrix(0,200,4)
+for(i in 1:200){
+  for(k in 1:4){
+    weight[i,k] <- exp(-(loc[i] - mcloc[k])^2/2/h2)
+  }
+  weight[i, ]<-weight[i,]/sum(weight[i,])
+}
+
+for(i in 1:200){
+  theta2.m[i] <- sum(weight[i,] * (m1 + m2 * (loc[i] - mcloc)))
+}
+theta0.m <- rep(m1, each = 50) 
+mse.1.ws0 <- round(mean((theta.m[1:50] - y[1:50])^2),3)
+mse.1.ns1 <- round(mean((theta2.m[1:50] - y[1:50])^2),3)
+mse.1.s0 <- round(mean((theta0.m[1:50] - y[1:50])^2),3)
+
+mse.2.ws0 <- round(mean((theta.m[51:100] - y[51:100])^2),3)
+mse.2.ns1 <- round(mean((theta2.m[51:100] - y[51:100])^2),3)
+mse.2.s0 <- round(mean((theta0.m[51:100] - y[51:100])^2),3)
+
+mse.3.ws0 <- round(mean((theta.m[101:150] - y[101:150])^2),3)
+mse.3.ns1 <- round(mean((theta2.m[101:150] - y[101:150])^2),3)
+mse.3.s0 <- round(mean((theta0.m[101:150] - y[101:150])^2),3)
+
+mse.4.ws0 <- round(mean((theta.m[151:200] - y[151:200])^2),3)
+mse.4.ns1 <- round(mean((theta2.m[151:200] - y[151:200])^2),3)
+mse.4.s0 <- round(mean((theta0.m[151:200] - y[151:200])^2),3)
+c(mse.1.s0,mse.1.ws0,mse.1.ns1)
+c(mse.2.s0,mse.2.ws0,mse.2.ns1)
+c(mse.3.s0,mse.3.ws0,mse.3.ns1)
+c(mse.4.s0,mse.4.ws0,mse.4.ns1)
+
+
+
+##Plot the results
+m <- rbind(c(1, 1), c(2, 3))
+layout(m)
+par(mar = c(3, 3, 1, 1))
+plot(loc,y,ylim = c(0,5),type = 'l',col = '#ACA4E2',lty=2,lwd=2,xlab='s',ylab='z')
+lines(loc,theta0,col = "#39BEB1",lwd = 2)
+lines(loc,theta[2,],col = '#ABB065',lwd = 2)
+lines(loc,theta2[2,],col = "red",lwd = 2)
+legend(0.65,5.2,c('Truth','S0 Estimates','WS0 Estimates','NS1 Estimates (Our Model)'),
+       col=c('#ACA4E2','#ABB065',"#39BEB1",'red'),lty = c(2,1,1,1),
+       lwd = c(2,2,2,2),cex = 1,text.font = 30,text.width = 10,bty = "n")
+
+##Functional boxplot
+fbplot(t(theta),x = loc,xlim = c(0,1),ylim = c(0,8),
+       xlab = 's',ylab = 'z',col = '#ACA4E2',barcol = '#ABB065',
+       main = 'Weighted local stationary model')
+lines(loc,y,col = 'red',lwd = 3,lty = 4)
+legend('topright',c('Truth'),col = c('red'),
+       lty = 4,lwd = 3,cex = 1,bty = "n")
+
+fbplot(t(theta2),x = loc,xlim = c(0,1),ylim = c(0,8),
+       xlab = 's',ylab = 'z',col='#ACA4E2',
+       barcol = '#ABB065',main = 'Our model')
+lines(loc,y,col = 'red',lwd = 3,lty = 4)
+legend('topright',c('Truth'),col = c('red'),
+       lty = 4, lwd = 3,cex = 1,bty = "n")
+
+```
+
+##Stationary case:Simulate the GRF, estimate the parameters, and smooth the parameters
+```{r stationary 1d matern}
+library(geoR)
+library(fda)
+library(ggplot2)
+library(cowplot)
+##parameter setup
+t <- (1:200)/200
+##true sigma
+#b <- 7
+#y2 <- sqrt((1+b^2)/(1+b^2*cos(15*t)^2))*cos(15*t)+1.5
+#plot(t,y2)
+y2 <- rep(2,200)
+v.vec2 <- v2.vec2 <- c()
+
+##simulate Gaussian random field
+set.seed(1)
+sim12 <- grf(200, grid = "reg", ny=1, 
+             nsim=1000, xlims=c(0,1),cov.model ="matern",
+             cov.pars=c(1, 0.2), kappa = 1, nug=0, mean = 0)
+##estimation
+##local stationary
+v.vec2 <- v2.vec2 <- c()
+##Repeat 1000 times
+niters <- 1000
+for(rep in 1:niters){
+u2 <- y2 * sim12$data[,rep]
+##estimate beta0
+v12<-c()
+v12[1] <- optimize(lik1,c(1,5),location = cbind(t[1:50],1),data = u2[1:50])$minimum
+v12[2] <- optimize(lik1,c(1,5),location = cbind(t[51:100],1),data = u2[51:100])$minimum
+v12[3] <- optimize(lik1,c(1,5),location = cbind(t[101:150],1),data = u2[101:150])$minimum
+v12[4] <- optimize(lik1,c(1,5),location = cbind(t[151:200],1),data = u2[151:200])$minimum
+
+##estimate beta1
+v22 <- c()
+v22[1] <- optimize(lik2,c(-2,2), beta0 = v[1], 
+                  location = cbind(t[1:50],1), data = u2[1:50])$minimum
+v22[2] <- optimize(lik2,c(-2,2), beta0 = v[2], 
+                  location = cbind(t[51:100],1), data = u2[51:100])$minimum
+v22[3] <- optimize(lik2,c(-2,2),beta0 = v[3], 
+                  location = cbind(t[101:150],1), data = u2[101:150])$minimum
+v22[4] <- optimize(lik2,c(-2,2),beta0 = v[4], 
+                  location = cbind(t[151:200],1), data = u2[151:200])$minimum
+v.vec2 <- cbind(v12, v.vec2)
+v2.vec2 <- cbind(v22, v2.vec2)
+}
+
+##Save the results
+#sims.1d2 <- cbind(v.vec2,v2.vec2)
+#saveRDS(sims.1d2,'sims.1d2.rds')
+sims.1d2 <- readRDS('sims.1d2.rds')
+mcloc <- c(.125,.375,.625,.875)
+v.vec2 <- sims.1d2[, 1:niters]
+v2.vec2 <- sims.1d2[, (niters+1):(2*niters)]
+h1 <- h2 <- (0.5 * sqrt(sum((mcloc[1] - mcloc[2])^2)))^2
+##h1 <- optimize(cv1,c(0,1))$minimum
+##h2 <- optimize(cv2,c(0,1))$minimum
+
+##smooth the estimators
+theta12 <- theta22 <- matrix(0,niters,200)
+for(j in 1:niters){
+thetak2 <- v.vec2[,j]
+beta2 <- v2.vec2[,j]
+loc <- (1:200)/200
+weight <- matrix(0,200,4)
+for(i in 1:200){
+    for(k in 1:4){
+        weight[i,k]<- exp(-(loc[i] - mcloc[k])^2/2/h1)
+    }
+    weight[i,]<-weight[i,]/sum(weight[i,])
+}
+
+##WS0 estimators
+for(i in 1:200){
+  theta12[j,i] <- sum(weight[i,] * thetak2)
+}
+
+weight <- matrix(0,200,4)
+for(i in 1:200){
+  for(k in 1:4){
+    weight[i,k] <- exp(-(loc[i] - mcloc[k])^2/2/h2)
+  }
+  weight[i, ] <- weight[i,]/sum(weight[i,])
+}
+
+##NS1 estimators
+for(i in 1:200){
+  theta22[j,i] <- sum(weight[i,] * (thetak2 + beta2 * (loc[i] - mcloc)))
+}
+}
+##S0 estimators
+theta02 <- rep(thetak2, each = 50) 
+
+
+```
+##Stationary case: plots and tables
+```{r stationary result}
+
+##Calculate the mean and standard deviation
+m12 <- round(apply(v.vec2,1,mean),3)
+m22 <- round(apply(v2.vec2,1,mean),3)
+sd12 <- round(apply(v.vec2,1,sd),3)
+sd22 <- round(apply(v2.vec2,1,sd),3)
+c(m12,m22,sd12,sd22)
+##Mean squared error
+theta.m2 <- theta2.m2 <- rep(0,200)
+weight <- matrix(0,200,4)
+for(i in 1:200){
+    for(k in 1:4){
+        weight[i,k]<- exp(-(loc[i] - mcloc[k])^2/2/h1)
+    }
+    weight[i,] <- weight[i,]/sum(weight[i,])
+}
+
+##WS0 estimators
+for(i in 1:200){
+  theta.m2[i] <- sum(weight[i,] * m12)
+}
+
+weight <- matrix(0,200,4)
+for(i in 1:200){
+    for(k in 1:4){
+        weight[i,k] <- exp(-(loc[i] - mcloc[k])^2/2/h2)
+    }
+    weight[i, ] <- weight[i,]/sum(weight[i,])
+}
+
+##NS1 estimators
+for(i in 1:200){
+  theta2.m2[i] <- sum(weight[i,] * (m12 + m22 * (loc[i] - mcloc)))
+}
+theta02.m2 <- rep(m12, each = 50) 
+mse.1.ws0.2 <- mean((theta.m2[1:50] - y2[1:50])^2)
+mse.1.ns1.2 <- mean((theta2.m2[1:50] - y2[1:50])^2)
+mse.1.s0.2 <- mean((theta02.m2[1:50] - y2[1:50])^2)
+
+mse.2.ws0.2 <- mean((theta.m2[51:100] - y2[51:100])^2)
+mse.2.ns1.2 <- mean((theta2.m2[51:100] - y2[51:100])^2)
+mse.2.s0.2 <- mean((theta02.m2[51:100] - y2[51:100])^2)
+
+mse.3.ws0.2 <- mean((theta.m2[101:150] - y2[101:150])^2)
+mse.3.ns1.2 <- mean((theta2.m2[101:150] - y2[101:150])^2)
+mse.3.s0.2 <- mean((theta02.m2[101:150] - y2[101:150])^2)
+
+mse.4.ws0.2 <-mean((theta.m2[151:200] - y2[151:200])^2)
+mse.4.ns1.2 <- mean((theta2.m2[151:200] - y2[151:200])^2)
+mse.4.s0.2 <- mean((theta02.m2[151:200] - y2[151:200])^2)
+c(mse.1.s0.2,mse.1.ws0.2,mse.1.ns1.2)
+c(mse.2.s0.2,mse.2.ws0.2,mse.2.ns1.2)
+c(mse.3.s0.2,mse.3.ws0.2,mse.3.ns1.2)
+c(mse.4.s0.2,mse.4.ws0.2,mse.4.ns1.2)
+
+par(mar = c(3, 3, 1, 1))
+plot(loc,y2,type = 'l',col = '#ACA4E2',lty=2,lwd=2,xlab='s',ylab='z')
+lines(loc,theta02.m2,col = "#39BEB1",lwd = 2)
+lines(loc,theta.m2,col = '#ABB065',lwd = 2)
+lines(loc,theta2.m2,col = "red",lwd = 2)
+legend(0.65,5.2,c('Truth','S0 Estimates','WS0 Estimates','NS1 Estimates (Our Model)'),
+       col=c('#ACA4E2','#ABB065',"#39BEB1",'red'),lty = c(2,1,1,1),
+       lwd = c(2,2,2,2),cex = 1,text.font = 30,text.width = 10,bty = "n")
+
+
+
+```
