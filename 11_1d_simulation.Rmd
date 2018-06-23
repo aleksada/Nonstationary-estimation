@@ -1,0 +1,616 @@
+---
+title: "1D simulation study"
+author: "Yuxiao Li"
+date: "`r Sys.Date()`"
+output: 
+  github_document:
+    toc: true
+  html_document:
+    toc: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Overview
+This is the code for generating 1D nonstationary Gaussian random field with nonstationary variance only. It includes 5 sections: "Libraries" to load the required library; "Functions" to write down the required functions for the estimation procedures; "Estimation", the main function, to generate Gaussian random field and estimate parameters; and "Results" to show the results including table and figures.
+
+## Libraries
+
+```{r load_libs}
+library(geoR)
+library(fda)
+library(ggplot2)
+library(cowplot)
+library(stats4)
+library(here)
+```
+
+## Functions
+```{r 1d beta0 lik}
+##likelihood function for estimating beta0
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##params: spatial varying parameters, sigma
+##Output:
+##Log likelihood
+lik1<-function(params,location,data){
+    sigmasq <- params^2
+    n <- dim(location)[1]
+    dist <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <- sqrt(sum((location[i,]-location[j,])^2))  
+        }
+    }
+  
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                       cov.pars = c(sigmasq, 0.2), kappa = 1)
+    Eigen <- eigen(cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+
+```{r 1d beta1 lik}
+##likelihood function for estimating beta1
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##beta0: intercept of sigma, estimated using function lik1
+##beta1: slope of sigma
+##Output:
+##Log likelihood
+lik2<-function(beta1, beta0, location, data){
+    sigmasq <- (beta0 + beta1*(location[,1]-mean(location[,1])))^2
+    n <- dim(location)[1]
+    dist <- sigmamat <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <-sqrt(sum((location[i,]-location[j,])^2))
+            sigmamat[i,j] <-sqrt(sigmasq[i]*sigmasq[j])
+        }
+    }
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                     cov.pars = c(1, 0.2), kappa = 1)
+    Eigen <- eigen(sigmamat*cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+```{r 1d two nonstationary parameters beta 0}
+##likelihood function for estimating beta0
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##params: spatial varying parameters, sigma
+##Output:
+##Log likelihood
+lik3<-function(params,location,data){
+    sigmasq <- params[1]^2
+    lambda <- params[2]
+    n <- dim(location)[1]
+    dist <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <- sqrt(sum((location[i,]-location[j,])^2))  
+        }
+    }
+  
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                       cov.pars = c(sigmasq, lambda), kappa = 1)
+    Eigen <- eigen(cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+```{r 1d two nonstationary parameters beta 1}
+##likelihood function for estimating beta1
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##beta0: intercept of sigma, estimated using function lik1
+##beta1: slope of sigma
+##Output:
+##Log likelihood
+lik4<-function(params, beta0,location, data){
+    sigmasq <- (beta0[1] + params[1]*(location[,1]-mean(location[,1])))^2
+    lambda <- beta0[2] + params[2]*(location[,1]-mean(location[,1]))
+    n <- dim(location)[1]
+    dist <- sigmamat <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <-sqrt(sum((location[i,]-location[j,])^2))
+            sigmamat[i,j] <-sqrt(sigmasq[i]*sigmasq[j])
+        }
+    }
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                     cov.pars = c(1, lambda), kappa = 1)
+    Eigen <- eigen(sigmamat*cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+```{r 1d three nonstationary parameters beta 0}
+##likelihood function for estimating beta0
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##params: spatial varying parameters, sigma
+##Output:
+##Log likelihood
+lik5<-function(params,location,data){
+    sigmasq <- params[1]^2
+    lambda <- params[2]
+    eta <- params[3]
+    n <- dim(location)[1]
+    dist <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <- sqrt(sum((location[i,]-location[j,])^2))  
+        }
+    }
+  
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                       cov.pars = c(sigmasq, lambda), kappa = 1)
+    cov <- cov + diag(rep(eta,n))
+    Eigen <- eigen(cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+```{r 1d three nonstationary parameters beta 1}
+##likelihood function for estimating beta1
+##Input:
+##location: n by 2 matrix
+##data: length n vector
+##beta0: intercept of sigma, estimated using function lik1
+##beta1: slope of sigma
+##Output:
+##Log likelihood
+lik6<-function(params,beta0, location, data){
+    sigmasq <- (beta0[1] + params[1]*(location[,1]-mean(location[,1])))^2
+    lambda <- beta0[2] + params[2]*(location[,1]-mean(location[,1]))
+    eta <- beta0[3] + params[3]*(location[,1]-mean(location[,1]))
+    n <- dim(location)[1]
+    dist <- sigmamat <- matrix(0,n,n)
+    for (i in 1:n){
+        for(j in 1:n){
+            dist[i,j] <-sqrt(sum((location[i,]-location[j,])^2))
+            sigmamat[i,j] <-sqrt(sigmasq[i]*sigmasq[j])
+        }
+    }
+    cov <- cov.spatial(dist, cov.model = "matern", 
+                     cov.pars = c(1, lambda), kappa = 1)
+    cov <- cov + diag(eta)
+    Eigen <- eigen(sigmamat*cov)
+    Eigen_value <- diag(Eigen$values)
+    Eigen_vec <- Eigen$vectors
+    Cov.inv <- Eigen_vec %*% diag(1/diag(Eigen_value)) %*% t(Eigen_vec)
+    loglikelihood <- 2 * (sum(log(2*pi*diag(Eigen_value))) + 
+                                     sum(diag(t(data) %*% Cov.inv %*% data)))
+    if (abs(loglikelihood) == Inf) {
+        loglikelihood <- 1e+05
+    }
+    return(loglikelihood)
+}
+```
+
+
+```{r function to compute CI}
+CI.1d <- function(fit = NULL){
+    fisher_info <- 1/fit$hessian
+    prop_sigma <- sqrt(fisher_info)
+    upper <- fit$par+1.96*prop_sigma
+    lower <- fit$par-1.96*prop_sigma
+    interval <- data.frame(value=fit$par, upper=upper, lower=lower)
+    interval
+}
+
+```
+
+```{r function to compute weight}
+weight.fun <- function(h,N,k){
+weight <- matrix(0,N,k)
+mcloc <- (1:k)/k-1/(2*k)
+t <- (1:N)/N
+for(i in 1:N){
+    for(k in 1:k){
+        weight[i,k]<- exp(-(t[i] - mcloc[k])^2/2/h)
+    }
+    weight[i,] <- weight[i,]/sum(weight[i,])
+}
+weight
+}
+```
+
+
+## Estimation
+
+###Generate and plot simulated data
+```{r generating data}
+N <- 200
+##parameter setup
+t <- (1:N)/N
+m <- 4
+##true sigma
+y <- (2 * sin(t/0.15) + 2.8)
+v.vec <- v2.vec <- c()
+
+##simulate Gaussian random field
+set.seed(1)
+sim11 <- grf(N, grid = "reg", ny = 1, 
+             nsim = 1000, xlims = c(0,1),cov.model ="matern",
+             cov.pars = c(1, 0.2), kappa = 1, nug = 0, mean = 0)
+#image(sim11)
+u_1 <- y * sim11$data[,2]
+
+
+```
+
+```{r plot realization}
+plot1 <- qplot(t,u_1,geom = "line",xlab = 's',ylab = 'Z',main='(a)')
+plot2 <- qplot(t[1:(N-1)], u_1[-N] - u_1[-1],geom = "line",xlab = 's',ylab = expression(Delta*Z),main='(b)')
+real1d<-plot_grid(plot1, plot2, align='h')
+ggsave(filename=here("results","real1d.pdf"), plot=real1d, width = 12, height = 5)
+```
+
+###Estimation from one simulated realization
+
+```{r estimating beta0 and beta1}
+u <- y*sim11$data[,2]
+
+v <- v2 <- NULL
+for(i in 1:m){
+    index <- (1:(N/m)) + (i-1)*(N/m)
+    ##estimate beta0
+    fit <- optim(5,lik1,location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = 0, upper = 10, hessian = TRUE)
+    v <- rbind(v,CI.1d(fit))
+    ##estimate beta1
+    fit2 <- optim(0,lik2,beta0 = v$value[i],location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = -15, upper = 15, hessian = TRUE)
+    v2 <- rbind(v2,CI.1d(fit2))
+}
+```
+
+###Computation time
+
+```{r optim S0}
+v <- v2 <- NULL
+start_time <- Sys.time()
+for(i in 1:m){
+    index <- (1:(N/m)) + (i-1)*(N/m)
+    ##estimate beta0
+    fit <- optim(5,lik1,location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = 0, upper = 10, hessian = TRUE)
+}
+v <- rbind(v,CI.1d(fit))
+end_time <- Sys.time()
+optim_time_S0 <- end_time - start_time
+
+```
+
+```{r smooth}
+mcloc <- (1:m)/m-1/(2*m)
+h1 <- h2 <- (0.5 * sqrt(sum((mcloc[1] - mcloc[2])^2)))^2
+
+theta <- data.frame(expected = rep(0,4*N),lower = rep(0,4*N),
+                    upper = rep(0,4*N),type = rep(0,4*N),t = rep(1:200,4))
+##S0 estimators
+start_time <- Sys.time()
+theta$expected[1:N] <- rep(v$value, each = 50) 
+theta$lower[1:N] <- rep(v$lower, each = 50) 
+theta$upper[1:N] <- rep(v$upper, each = 50)
+end_time <- Sys.time()
+smooth_time_S0 <- end_time - start_time
+
+
+##WS0 estimators
+weight1 <- weight.fun(h1,N,m)
+start_time <- Sys.time()
+for(i in 1:N){
+    theta$expected[N + i] <- sum(weight1[i,] * v$value)
+    theta$lower[N + i] <- sum(weight1[i,] * v$lower)
+    theta$upper[N + i] <- sum(weight1[i,] * v$upper)
+}
+end_time <- Sys.time()
+smooth_time_WS0 <- end_time - start_time
+```
+
+```{r optim NS1}
+m=4
+v <- v2 <- NULL
+start_time <- Sys.time()
+for(i in 1:m){
+    index <- (1:(N/m)) + (i-1)*(N/m)
+    ##estimate beta0
+    fit <- optim(5,lik1,location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = 0, upper = 10, hessian = TRUE)
+    v <- rbind(v,CI.1d(fit))
+    ##estimate beta1
+    fit2 <- optim(0,lik2,beta0 = v$value[i],location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = -15, upper = 15, hessian = TRUE)
+    v2 <- rbind(v2,CI.1d(fit2))
+}
+end_time <- Sys.time()
+optim_time_NS1 <- end_time - start_time
+```
+
+```{r smooth NS1}
+mcloc <- (1:m)/m-1/(2*m)
+h1 <- h2 <- (0.5 * sqrt(sum((mcloc[1] - mcloc[2])^2)))^2
+
+theta <- data.frame(expected = rep(0,4*N),lower = rep(0,4*N),
+                    upper = rep(0,4*N),type = rep(0,4*N),t = rep(1:200,4))
+start_time <- Sys.time()
+##NS1 estimators
+weight2 <- weight.fun(h2,N,m)
+for(i in 1:N){
+    theta$expected[2*N + i] <- sum(weight2[i,] * (v$value + v2$value * (t[i] - mcloc)))
+    theta$lower[2*N + i] <- sum(weight2[i,] * (v$lower + ifelse((t[i] - mcloc)>0,v2$lower,v2$upper) * (t[i] - mcloc)))
+    theta$upper[2*N + i] <- sum(weight2[i,] * (v$upper + ifelse((t[i] - mcloc)>0,v2$upper,v2$lower) * (t[i] - mcloc)))
+}
+
+end_time <- Sys.time()
+smooth_time_NS1 <- end_time - start_time
+```
+
+```{r moving window}
+start_time <- Sys.time()
+mov<-optim(5,lik1,location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = 0, upper = 10, hessian = TRUE)
+end_time <- Sys.time()
+optim_time_movS0 <- end_time - start_time
+```
+
+```{r}
+time_S0 <- optim_time_S0 + smooth_time_S0
+time_WS0 <- optim_time_S0 + smooth_time_WS0
+time_NS1 <- optim_time_NS1 + smooth_time_NS1
+time_movS0 <- optim_time_movS0*N
+```
+
+```{r multiple nonstationary parameters}
+m=4
+v <- v2 <- NULL
+start_time <- Sys.time()
+for(i in 1:m){
+    index <- (1:(N/m)) + (i-1)*(N/m)
+    ##estimate beta0
+    fit <- optim(c(5,0.1,0.1),lik5,location = cbind(t[index],1),method = "L-BFGS-B",
+                 data = u[index], lower = c(0,0,0.3), upper = 10, hessian = TRUE)
+    ##estimate beta1
+    fit2 <- optim(c(0,0,0),lik6,beta0 = fit$par,location = cbind(t[index],1),method = "L-BFGS-B", data = u[index],lower = c(-1,-1,-1), upper = c(1,1,1), hessian = TRUE)
+}
+end_time <- Sys.time()
+optim_time_NS1 <- end_time - start_time
+
+```
+
+
+```{r approximating spatially varying parameter theta}
+mcloc <- (1:m)/m-1/(2*m)
+h1 <- h2 <- (0.5 * sqrt(sum((mcloc[1] - mcloc[2])^2)))^2
+
+theta <- data.frame(expected = rep(0,3*N),lower = rep(0,3*N),
+                    upper = rep(0,3*N),type = rep(0,3*N),t = rep(1:N,3))
+##S0 estimators
+theta$expected[1:N] <- rep(v$value, each = N/m) 
+theta$lower[1:N] <- rep(v$lower, each = N/m) 
+theta$upper[1:N] <- rep(v$upper, each = N/m)
+
+##WS0 estimators
+weight1 <- weight.fun(h1,N,m)
+for(i in 1:N){
+    theta$expected[N + i] <- sum(weight1[i,] * v$value)
+    theta$lower[N + i] <- sum(weight1[i,] * v$lower)
+    theta$upper[N + i] <- sum(weight1[i,] * v$upper)
+}
+
+##Real Curve
+theta$expected[2*N + 1:N] <- y
+theta$lower[2*N + 1:N] <- NA
+theta$upper[2*N + 1:N] <- NA
+theta$type<-c(rep("2:S0",N),rep("3:WS0",N),rep("1:Truth",N))
+
+theta2 <- data.frame(expected = rep(0,2*N),lower = rep(0,2*N),
+                    upper = rep(0,2*N),type = rep(0,2*N),t = rep(1:N,2))
+
+##NS1 estimators
+weight2 <- weight.fun(h2,N,m)
+for(i in 1:N){
+    theta2$expected[N + i] <- sum(weight2[i,] * (v$value + v2$value * (t[i] - mcloc)))
+    theta2$lower[N + i] <- sum(weight2[i,] * (v$lower + ifelse((t[i] - mcloc)>0,v2$lower,v2$upper) * (t[i] - mcloc)))
+    theta2$upper[N + i] <- sum(weight2[i,] * (v$upper + ifelse((t[i] - mcloc)>0,v2$upper,v2$lower) * (t[i] - mcloc)))
+}
+##Real Curve
+theta2$expected[1:N] <- y
+theta2$lower[1:N] <- NA
+theta2$upper[1:N] <- NA
+theta2$type<-c(rep("1:Truth",N),rep("2:NS1",N))
+```
+
+###Estimation from 1000 simulated realization
+
+```{r 1000 times estimating beta0 and beta1}
+##estimation
+##local stationary
+niters <- 100
+v.vec <- v2.vec <- matrix(0,4,niters)
+##Repeat 1000 times
+for(rep in 1:niters){
+    u <- y*sim11$data[,rep]
+    for(i in 1:4){
+        index <- (1:(N/m)) + (i-1)*(N/m)
+        ##estimate beta0
+        fit <- optim(5,lik1,location = cbind(t[index],1),method = "Brent",
+                 data = u[index], lower = 0, upper = 10)
+        ##estimate beta1
+        fit2 <- optim(2,lik2, beta0 =  fit$par,location = cbind(t[index],1),
+                      method = "Brent",data = u[index], lower = -15, upper = 15)
+        v.vec[i,rep] <- fit$par
+        v2.vec[i,rep] <- fit2$par
+    }
+}
+```
+
+###Save the results
+```{r Save the results}
+sims.1d <- cbind(v.vec,v2.vec)
+saveRDS(sims.1d,here("results",'sims.1d.rds'))
+
+```
+
+```{r 1000 times approximating theta}
+sims.1d <- readRDS(here("results","sims.1d.rds"))
+v.vec <- sims.1d[, 1:100]
+v2.vec <- sims.1d[, 101:200]
+
+##smooth the estimators
+theta.WS0 <- theta.NS1 <- matrix(0,niters,200)
+for(j in 1:niters){
+beta0 <- v.vec[,j]
+beta1 <- v2.vec[,j]
+    for(i in 1:N){
+        ##WS0 estimators
+        theta.WS0[j,i] <- sum(weight1[i,] * beta0)
+        ##NS1 estimators
+        theta.NS1[j,i] <- sum(weight2[i,] * (beta0 + beta1 * (t[i] - mcloc)))
+    }
+
+}
+theta.S0 <- rep(beta0, each = 50) 
+```
+
+##Results
+
+```{r results for table}
+##Calculate the mean and standard deviation
+beta0.mean <- round(apply(v.vec,1,mean),2)
+beta1.mean <- round(apply(v2.vec,1,mean),2)
+beta0.sd <- round(apply(v.vec,1,sd),2)
+beta1.sd <- round(apply(v2.vec,1,sd),2)
+theta.WS0.m <- theta.NS1.m <-c()
+for(i in 1:N){
+    ##WS0 estimators
+    theta.WS0.m[i] <- sum(weight1[i,] * beta0.mean)
+    ##NS1 estimators
+    theta.NS1.m[i] <- sum(weight2[i,] * (beta0.mean + beta1.mean * (t[i] - mcloc)))
+}
+
+theta.S0.m <- rep(beta0.mean, each = 50) 
+## Mean squared error
+mse.WS0 <- round(mean((theta.WS0.m - y)^2),3)
+mse.NS1 <- round(mean((theta.NS1.m - y)^2),3)
+mse.S0 <- round(mean((theta.S0.m - y)^2),3)
+mse.S0/mse.NS1
+mse.WS0/mse.NS1
+```
+
+```{r results with CI 1 simulation}
+p <- ggplot(data = theta, aes(x=t/200, y=expected, colour=type)) + 
+    geom_line() + ylab(expression(sigma)) + xlab("s") +
+    ggtitle("(a) Local Stationary Estimations, m=4") +
+    scale_y_continuous(limits = c(0,7))+
+    geom_ribbon(aes(ymin=lower, ymax=upper,fill=type), linetype=2, alpha=0.3) + 
+    scale_color_brewer(palette = "Set1") +    
+    scale_fill_brewer(palette = "Set1")
+p
+```
+
+```{r}
+p2 <- ggplot(data = theta2, aes(x=t/200, y=expected, colour=type)) + 
+    geom_line() + ylab(expression(sigma)) + xlab("s") +
+    ggtitle("(b) Our Estimation, m=4") +scale_y_continuous(limits = c(0,7))+
+    geom_ribbon(aes(ymin=lower, ymax=upper,fill=type), linetype=2, alpha=0.3) + 
+    scale_color_brewer(palette = "Set1") +    
+    scale_fill_brewer(palette = "Set1")
+p2
+```
+
+```{r save the figure}
+combine_plot<-plot_grid(p, p2, align='h',rel_widths = 1.2, rel_heights = 1)
+ggsave(filename=here("results","1Dest.pdf"),device='pdf', plot=combine_plot, width = 12, height = 5)
+```
+
+```{r save the figure}
+combine_plot<-plot_grid(p, p2, align='h',rel_widths = 1.2, rel_heights = 1)
+ggsave(filename=here("results","1Destm2.pdf"), plot=combine_plot, width = 12, height = 5)
+```
+
+```{r save the figure}
+combine_plot<-plot_grid(p, p2, align='h',rel_widths = 1.2, rel_heights = 1)
+ggsave(filename=here("results","1Destm4.pdf"), plot=combine_plot, width = 12, height = 5)
+```
+
+```{r save the figure}
+combine_plot<-plot_grid(p, p2, align='h',rel_widths = 1.2, rel_heights = 1)
+ggsave(filename=here("results","1Destm8.pdf"), plot=combine_plot, width = 12, height = 5)
+```
+
+```{r save the figure}
+combine_plot<-plot_grid(p, p2, align='h',rel_widths = 1.2, rel_heights = 1)
+ggsave(filename=here("results","1Destm10.pdf"), plot=combine_plot, width = 12, height = 5)
+```
+
+```{r fbplots 100 simultions}
+par(mfrow=c(1,2),mar = c(4, 4, 2, 1))
+##Functional boxplot
+fbplot(t(theta.WS0),x = t,xlim = c(0,1),ylim = c(0,8),
+       xlab = 's',ylab = expression(sigma),col = '#ACA4E2',barcol = '#ABB065',
+       main = '(a) Functional boxplot -- WS0')
+lines(t,y,col = 'red',lwd = 3,lty = 4)
+legend('topright',c('Truth'),col = c('red'),
+       lty = 4,lwd = 3,cex = 1,bty = "n")
+
+fbplot(t(theta.NS1),x = t,xlim = c(0,1),ylim = c(0,8),
+       xlab = 's',ylab = expression(sigma),col='#ACA4E2',
+       barcol = '#ABB065',main = '(b) Functional boxplot -- NS1')
+lines(t,y,col = 'red',lwd = 3,lty = 4)
+legend('topright',c('Truth'),col = c('red'),
+       lty = 4, lwd = 3,cex = 1,bty = "n")
+
+```
+
+
